@@ -1,0 +1,200 @@
+"""Runs a validated agent.dsl.Plan against the real, deterministic tool
+implementations in evidence/ops.py and evidence/change.py.
+
+This module's job is wiring, in two parts: first, agent.guardrail's
+capability check rewrites any step the image's own resolution can't
+actually support (see apply_capability_guardrail's docstring); then each
+tool name the (possibly rewritten) plan uses gets bound to its real
+implementation, over this call's mask/metadata (and before/after, for
+change), and handed to agent.dsl.execute() -- which is where "validate
+first, run every step in order, build a trace" already lives (agent/dsl.py,
+tested there). This module doesn't re-implement that; it applies the
+guardrail before execution and summarizes each step's raw output into
+something small and serialisable for the trace afterward.
+
+Because agent.dsl.execute() takes no LLM input, and everything here is
+plain Python wiring over a fixed mask/metadata, running the exact same
+Plan JSON against the exact same rasters always reproduces the exact same
+outputs and ExecutionTrace -- replayable without the LLM, per the deck.
+"""
+
+import functools
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+
+from agent.dsl import Plan, execute as _dsl_execute
+from agent.guardrail import apply_capability_guardrail
+from evidence import change, ops
+from evidence.schema import TraceStep
+from tools import caption as caption_tool
+from tools import cross_modal as cross_modal_tool
+from tools import grounding as grounding_tool
+
+# Tools backed directly by evidence/ops.py. Each has the shape
+# fn(mask, ...permitted_parameters..., metadata) -- mask and metadata are
+# call-level context, never LLM-controlled parameters (see agent/registry.py).
+_OPS_TOOLS = ("count", "size", "presence", "adjacency")
+
+
+class ExecutorError(RuntimeError):
+    """Raised when a plan needs a raster (mask, or before/after) that this
+    run() call didn't provide."""
+
+
+def _summarize(output: Any) -> Any:
+    """A compact, JSON-serialisable summary of a tool's raw output, for the
+    trace. Scalars (the count/size/presence/adjacency outputs) pass
+    through unchanged. A change.ChangeReport's full change-mask raster is
+    reduced to a changed-pixel count instead of being embedded whole, so
+    the trace stays small regardless of raster size. A caption.CaptionResult's
+    dataclasses are reduced to plain dicts/tuples -- both the final
+    (possibly Gemini-smoothed) caption AND the untouched, fact-only
+    template_sentence are kept, so the trace itself is the audit trail
+    proving Gemini didn't change a fact. A grounding.GroundingResult's
+    dataclass and Polygon models are likewise reduced to plain dicts, as
+    is a cross_modal.CrossModalResult's list of per-class findings."""
+    if isinstance(output, change.ChangeReport):
+        return {
+            "changed_pixels": int(output.mask.sum()),
+            "area_changes": output.area_changes,
+            "summary": output.summary,
+        }
+    if isinstance(output, caption_tool.CaptionResult):
+        return {
+            "caption": output.caption,
+            "template_sentence": output.template_sentence,
+            "smoothed": output.smoothed,
+            "facts": [
+                {"class_id": f.class_id, "class_name": f.class_name,
+                 "area_ha": f.area_ha, "fragment_count": f.fragment_count}
+                for f in output.facts
+            ],
+            "adjacent_pairs": output.adjacent_pairs,
+        }
+    if isinstance(output, grounding_tool.GroundingResult):
+        return {
+            "class_id": output.class_id,
+            "class_name": output.class_name,
+            "area_ha": output.area_ha,
+            "candidate_count": output.candidate_count,
+            "qualifier": output.qualifier,
+            "centroid_pixel": output.centroid_pixel,
+            "centroid_lonlat": output.centroid_lonlat,
+            "pixel_bbox": output.pixel_bbox,
+            "geo_bbox": output.geo_bbox,
+            "pixel_polygon": output.pixel_polygon.model_dump(),
+            "geo_polygon": output.geo_polygon.model_dump() if output.geo_polygon is not None else None,
+        }
+    if isinstance(output, cross_modal_tool.CrossModalResult):
+        return {
+            "cloud_simulated": output.cloud_simulated,
+            "cloud_fraction": output.cloud_fraction,
+            "summary": output.summary,
+            "findings": [
+                {"class_id": f.class_id, "class_name": f.class_name,
+                 "optical_area_ha": f.optical_area_ha, "sar_area_ha": f.sar_area_ha,
+                 "fused_area_ha": f.fused_area_ha, "detected_by": f.detected_by,
+                 "attribution": f.attribution}
+                for f in output.findings
+            ],
+        }
+    return output
+
+
+@dataclass
+class ExecutionTrace:
+    """Every step's task, tool name, parameters, output summary, and
+    confidence, in call order -- plain data, so it can be logged, diffed,
+    or handed to someone else to replay, with no LLM involved."""
+
+    steps: list[TraceStep]
+
+    def __iter__(self):
+        return iter(self.steps)
+
+    def __len__(self) -> int:
+        return len(self.steps)
+
+
+def run(
+    plan: Plan,
+    metadata: dict,
+    *,
+    mask: np.ndarray | None = None,
+    before: np.ndarray | None = None,
+    after: np.ndarray | None = None,
+    stack: np.ndarray | None = None,
+    classes: dict[int, str] | None = None,
+) -> tuple[dict[str, Any], ExecutionTrace]:
+    """Run every step of `plan` against evidence/ops.py
+    (count/size/presence/adjacency, over `mask`), evidence/change.py
+    (change, over `before`/`after`), tools/caption.py and tools/grounding.py
+    (caption/ground, over `mask`), and tools/cross_modal.py (cross_modal,
+    over the raw `stack` -- it segments internally, three ways, so it
+    needs the model's full multi-channel input, not a pre-computed mask).
+
+    When `classes` (the scene's class_id -> name mapping) is given, the
+    capability guardrail runs first: any `count` step targeting a class
+    that isn't resolvable at `metadata['gsd_metres']` is rewritten to a
+    `size` step, and the trace records why. Without `classes` there's no
+    way to know what a class_id represents, so the guardrail is skipped --
+    pass it whenever you have it.
+
+    Returns (result, trace): `result` maps each step's id to its full,
+    unsummarized output (e.g. the actual change.ChangeReport, not a
+    summary of it); `trace` is the ExecutionTrace described above.
+
+    Raises agent.dsl.PlanValidationError if the plan itself is invalid
+    (unknown tool, out-of-schema parameters, duplicate ids) or references a
+    tool with no implementation here (e.g. segment -- not backed by
+    evidence/ops.py, evidence/change.py, tools/caption.py, tools/grounding.py,
+    or tools/cross_modal.py). Raises ExecutorError if the plan needs a
+    raster this call didn't provide.
+    """
+    guardrail_trace: list[TraceStep] = []
+    if classes is not None:
+        plan, guardrail_trace = apply_capability_guardrail(plan, classes, metadata["gsd_metres"])
+
+    needed_tools = {step.tool for step in plan}
+    tool_functions: dict[str, Any] = {}
+
+    if needed_tools & set(_OPS_TOOLS):
+        if mask is None:
+            raise ExecutorError(
+                "plan uses an evidence.ops tool (count/size/presence/adjacency) "
+                "but no mask was provided"
+            )
+        for name in _OPS_TOOLS:
+            tool_functions[name] = functools.partial(getattr(ops, name), mask, metadata=metadata)
+
+    if "change" in needed_tools:
+        if before is None or after is None:
+            raise ExecutorError(
+                "plan uses the 'change' tool but before and after rasters were not both provided"
+            )
+        tool_functions["change"] = functools.partial(change.detect_change, before, after, metadata)
+
+    if "caption" in needed_tools:
+        if mask is None:
+            raise ExecutorError("plan uses the 'caption' tool but no mask was provided")
+        tool_functions["caption"] = functools.partial(caption_tool.caption, mask, metadata)
+
+    if "ground" in needed_tools:
+        if mask is None:
+            raise ExecutorError("plan uses the 'ground' tool but no mask was provided")
+        tool_functions["ground"] = functools.partial(grounding_tool.ground, mask, metadata)
+
+    if "cross_modal" in needed_tools:
+        if stack is None:
+            raise ExecutorError("plan uses the 'cross_modal' tool but no stack was provided")
+        tool_functions["cross_modal"] = functools.partial(cross_modal_tool.cross_modal_analysis, stack, metadata)
+
+    dsl_result = _dsl_execute(plan, tool_functions)
+
+    trace_steps = guardrail_trace + [
+        step.model_copy(update={"output": _summarize(step.output)})
+        for step in dsl_result.trace
+    ]
+    return dsl_result.outputs, ExecutionTrace(trace_steps)
