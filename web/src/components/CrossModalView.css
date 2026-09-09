@@ -51,11 +51,16 @@
   backdrop-filter: blur(6px);
   pointer-events: none;
 }
+/* Offsets clear the findings panel (left, 240px + space-4) and the
+   compact AnswerPanel (right, 240px + space-5) respectively, with a
+   little extra margin -- see AnswerPanel.css's --compact variant and
+   .cross-modal-findings above, both narrowed for this view specifically
+   so the imagery keeps the majority of the width. */
 .cross-modal-view__side-badge--base {
-  left: 380px;
+  left: 280px;
 }
 .cross-modal-view__side-badge--mask {
-  right: 420px;
+  right: 290px;
 }
 
 /* --- Draggable swipe divider, identical mechanism to ChangeView.tsx ---- */
@@ -183,6 +188,12 @@
 /* --- Findings panel: same slot/shape as GainLossTable/Legend (left,
    top: 100px), since cross_modal scenes never show either of those ------ */
 
+/* Narrow and content-sized on purpose -- on this view the swipe
+   comparison IS the content, so this panel must never claim more than a
+   sliver of the map's width. Collapsed by default (see
+   CrossModalFindingsPanel's `expanded` state); even expanded it's sized
+   to fit within a 1440x900 viewport's map area without its own scrollbar
+   (tight padding/type below), with overflow-y as a safety net only. */
 .cross-modal-findings {
   position: absolute;
   left: var(--space-4);
@@ -190,34 +201,50 @@
   z-index: var(--z-panel);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-3);
   background: var(--surface-glass);
   border: 1px solid var(--border-hairline-strong);
   border-radius: var(--radius-md);
   backdrop-filter: blur(8px);
-  width: 340px;
+  width: 240px;
   max-height: calc(100% - var(--space-4) - var(--panel-bottom-clearance));
   overflow-y: auto;
   animation: stagger-in var(--duration-base) var(--ease-out);
 }
 
 .cross-modal-findings__header {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: inherit;
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  cursor: pointer;
 }
 
 .cross-modal-findings__count {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-1);
+}
+
+.cross-modal-findings__chevron {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 13px;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.cross-modal-findings__chevron--open {
+  transform: rotate(90deg);
+  color: var(--signal-active);
 }
 
 .cross-modal-findings__status {
   margin: 0;
   font-family: var(--font-body);
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-1);
   line-height: 1.5;
 }
@@ -228,17 +255,17 @@
 .cross-modal-findings__status-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--border-hairline);
 }
 
 .cross-modal-findings__status-chip {
-  padding: 3px 8px;
+  padding: 2px 6px;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.03em;
+  font-size: 9px;
+  letter-spacing: 0.02em;
 }
 .cross-modal-findings__status-chip--usable {
   color: var(--signal-verified);
@@ -249,24 +276,32 @@
   background: rgba(217, 106, 95, 0.14);
 }
 
+.cross-modal-findings__summary-line {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
 .cross-modal-findings__rows {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .cross-modal-findings__row {
   display: grid;
-  grid-template-columns: 1.6fr 0.6fr 0.6fr 0.6fr;
+  grid-template-columns: 1.5fr 0.55fr 0.55fr 0.55fr;
   align-items: center;
-  gap: var(--space-2);
-  padding: 5px 0;
+  gap: 6px;
+  padding: 3px 0;
 }
 .cross-modal-findings__row:not(:last-child):not(.cross-modal-findings__row--head) {
   border-bottom: 1px solid var(--border-hairline);
 }
 .cross-modal-findings__row--head {
-  padding-bottom: var(--space-2);
+  padding-bottom: var(--space-1);
 }
 
 .cross-modal-findings__num-head {
@@ -274,7 +309,7 @@
 }
 
 .cross-modal-findings__name {
-  font-size: 12px;
+  font-size: 10.5px;
   color: var(--text-0);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -282,7 +317,7 @@
 }
 
 .cross-modal-findings__num {
-  font-size: 12px;
+  font-size: 10.5px;
   text-align: right;
   color: var(--text-2);
 }
@@ -297,10 +332,10 @@
 
 .cross-modal-findings__summary {
   margin: 0;
-  padding-top: var(--space-3);
+  padding-top: var(--space-2);
   border-top: 1px solid var(--border-hairline);
   font-family: var(--font-body);
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 11px;
+  line-height: 1.5;
   color: var(--text-1);
 }

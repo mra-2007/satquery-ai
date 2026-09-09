@@ -168,6 +168,7 @@ export default function App() {
           onToggleTrace={() => setTraceOpen((open) => !open)}
           verificationOpen={verificationOpen}
           onToggleVerification={() => setVerificationOpen((open) => !open)}
+          compact={isCrossModalScene}
         />
 
         <TraceDrawer

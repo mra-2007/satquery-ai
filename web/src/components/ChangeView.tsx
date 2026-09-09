@@ -10,6 +10,7 @@ import type RenderEvent from "ol/render/Event";
 import "ol/ol.css";
 
 import { sceneChangeMaskUrl, sceneImageUrl } from "../api/client";
+import { disablePixelSmoothing } from "../utils/olRendering";
 import "./ChangeView.css";
 
 interface ChangeViewProps {
@@ -46,6 +47,7 @@ export default function ChangeView({ sceneId, width, height, gsdMetres, beforeDa
     const beforeLayer = new ImageLayer<ImageStatic>();
     const afterLayer = new ImageLayer<ImageStatic>();
     const changeMaskLayer = new ImageLayer<ImageStatic>({ visible: false, opacity: 0.9 });
+    disablePixelSmoothing(changeMaskLayer); // categorical (changed/unchanged) -- never smoothed, see olRendering.ts
     beforeLayerRef.current = beforeLayer;
     afterLayerRef.current = afterLayer;
     changeMaskLayerRef.current = changeMaskLayer;

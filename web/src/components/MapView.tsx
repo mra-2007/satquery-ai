@@ -9,6 +9,7 @@ import type MapBrowserEvent from "ol/MapBrowserEvent";
 import "ol/ol.css";
 
 import { sceneImageUrl, sceneMaskUrl } from "../api/client";
+import { disablePixelSmoothing } from "../utils/olRendering";
 import "./MapView.css";
 
 interface MapViewProps {
@@ -39,6 +40,7 @@ export default function MapView({ sceneId, width, height, gsdMetres, maskOpacity
 
     const baseLayer = new ImageLayer<ImageStatic>();
     const maskLayer = new ImageLayer<ImageStatic>({ opacity: maskOpacity });
+    disablePixelSmoothing(maskLayer); // a class mask is categorical -- never smoothed, see olRendering.ts
     baseLayerRef.current = baseLayer;
     maskLayerRef.current = maskLayer;
 

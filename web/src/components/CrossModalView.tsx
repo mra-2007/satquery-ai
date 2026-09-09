@@ -11,6 +11,7 @@ import "ol/ol.css";
 
 import { getSceneCrossModal, sceneCrossModalMaskUrl, sceneImageUrl } from "../api/client";
 import type { CrossModalSensor, CrossModalSummary } from "../api/types";
+import { disablePixelSmoothing } from "../utils/olRendering";
 import "./CrossModalView.css";
 
 interface CrossModalViewProps {
@@ -47,6 +48,7 @@ export default function CrossModalView({ sceneId, width, height, gsdMetres }: Cr
 
     const baseLayer = new ImageLayer<ImageStatic>();
     const maskLayer = new ImageLayer<ImageStatic>();
+    disablePixelSmoothing(maskLayer); // a class mask is categorical -- never smoothed, see olRendering.ts
     baseLayerRef.current = baseLayer;
     maskLayerRef.current = maskLayer;
 
@@ -253,6 +255,11 @@ function CrossModalFindingsPanel({
   loading: boolean;
   error: string | null;
 }) {
+  // Collapsed by default -- on the CROSS-MODAL view the swipe comparison
+  // IS the content, so the findings table only earns its screen space
+  // once someone actually asks for it.
+  const [expanded, setExpanded] = useState(false);
+
   if (loading && !analysis) {
     return (
       <div className="cross-modal-findings">
@@ -275,10 +282,18 @@ function CrossModalFindingsPanel({
 
   return (
     <div className="cross-modal-findings">
-      <div className="cross-modal-findings__header">
+      <button
+        type="button"
+        className="cross-modal-findings__header"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+      >
         <span className="label">CROSS-MODAL FINDINGS</span>
         <span className="tabular cross-modal-findings__count">{analysis.findings.length} class(es)</span>
-      </div>
+        <span className={"cross-modal-findings__chevron" + (expanded ? " cross-modal-findings__chevron--open" : "")}>
+          ›
+        </span>
+      </button>
 
       <div className="cross-modal-findings__status-row">
         {SENSORS.map((option) => (
@@ -291,54 +306,66 @@ function CrossModalFindingsPanel({
                 : " cross-modal-findings__status-chip--usable")
             }
           >
-            {option.toUpperCase()} {analysis.sensor_status[option]}
+            {option.slice(0, 3).toUpperCase()} {analysis.sensor_status[option]}
           </span>
         ))}
       </div>
 
-      {analysis.findings.length === 0 ? (
-        <p className="cross-modal-findings__status">No land-cover classes were detected by any sensor mode.</p>
+      {!expanded ? (
+        <p className="cross-modal-findings__summary-line">
+          {analysis.findings.length === 0
+            ? "No classes detected by any sensor mode."
+            : `${analysis.findings.map((f) => f.class_name).slice(0, 2).join(", ")}` +
+              (analysis.findings.length > 2 ? ` +${analysis.findings.length - 2} more` : "") +
+              " -- click to expand"}
+        </p>
       ) : (
-        <div className="cross-modal-findings__rows">
-          <div className="cross-modal-findings__row cross-modal-findings__row--head">
-            <span className="label">CLASS</span>
-            <span className="label cross-modal-findings__num-head">OPT</span>
-            <span className="label cross-modal-findings__num-head">SAR</span>
-            <span className="label cross-modal-findings__num-head">FUS</span>
-          </div>
-          {analysis.findings.map((finding) => (
-            <div className="cross-modal-findings__row" key={finding.class_id} title={finding.attribution}>
-              <span className="cross-modal-findings__name">{finding.class_name}</span>
-              <span
-                className={
-                  "tabular cross-modal-findings__num" +
-                  (finding.detected_by.includes("optical") ? " cross-modal-findings__num--hit" : "")
-                }
-              >
-                {finding.optical_area_ha > 0 ? finding.optical_area_ha.toFixed(1) : "–"}
-              </span>
-              <span
-                className={
-                  "tabular cross-modal-findings__num" +
-                  (finding.detected_by.includes("sar") ? " cross-modal-findings__num--hit" : "")
-                }
-              >
-                {finding.sar_area_ha > 0 ? finding.sar_area_ha.toFixed(1) : "–"}
-              </span>
-              <span
-                className={
-                  "tabular cross-modal-findings__num" +
-                  (finding.detected_by.includes("fused") ? " cross-modal-findings__num--hit" : "")
-                }
-              >
-                {finding.fused_area_ha > 0 ? finding.fused_area_ha.toFixed(1) : "–"}
-              </span>
+        <>
+          {analysis.findings.length === 0 ? (
+            <p className="cross-modal-findings__status">No land-cover classes were detected by any sensor mode.</p>
+          ) : (
+            <div className="cross-modal-findings__rows">
+              <div className="cross-modal-findings__row cross-modal-findings__row--head">
+                <span className="label">CLASS</span>
+                <span className="label cross-modal-findings__num-head">OPT</span>
+                <span className="label cross-modal-findings__num-head">SAR</span>
+                <span className="label cross-modal-findings__num-head">FUS</span>
+              </div>
+              {analysis.findings.map((finding) => (
+                <div className="cross-modal-findings__row" key={finding.class_id} title={finding.attribution}>
+                  <span className="cross-modal-findings__name">{finding.class_name}</span>
+                  <span
+                    className={
+                      "tabular cross-modal-findings__num" +
+                      (finding.detected_by.includes("optical") ? " cross-modal-findings__num--hit" : "")
+                    }
+                  >
+                    {finding.optical_area_ha > 0 ? finding.optical_area_ha.toFixed(1) : "–"}
+                  </span>
+                  <span
+                    className={
+                      "tabular cross-modal-findings__num" +
+                      (finding.detected_by.includes("sar") ? " cross-modal-findings__num--hit" : "")
+                    }
+                  >
+                    {finding.sar_area_ha > 0 ? finding.sar_area_ha.toFixed(1) : "–"}
+                  </span>
+                  <span
+                    className={
+                      "tabular cross-modal-findings__num" +
+                      (finding.detected_by.includes("fused") ? " cross-modal-findings__num--hit" : "")
+                    }
+                  >
+                    {finding.fused_area_ha > 0 ? finding.fused_area_ha.toFixed(1) : "–"}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          )}
 
-      <p className="cross-modal-findings__summary">{analysis.summary}</p>
+          <p className="cross-modal-findings__summary">{analysis.summary}</p>
+        </>
+      )}
     </div>
   );
 }
