@@ -1,0 +1,12 @@
+{
+  "temperature": 0.9899497487437187,
+  "n_pixels": 921600,
+  "n_patches": 64,
+  "nll_before": 0.722314715385437,
+  "nll_after": 0.7223060727119446,
+  "ece_before": 0.01918183546099395,
+  "ece_after": 0.01839940923791596,
+  "mean_top1_confidence_before": 0.7410033941268921,
+  "mean_top1_confidence_after": 0.7431018352508545,
+  "pixel_accuracy": 0.7491688368055556
+}

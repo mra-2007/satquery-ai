@@ -370,6 +370,56 @@ def test_no_api_key_and_no_client_uses_fallback_directly(tmp_path, monkeypatch):
     assert plan[0].parameters["class_id"] == 1
 
 
+# --- plan_from_query_with_meta: attempts/source, for confidence/engine.py ---
+
+
+def test_with_meta_first_try_reports_one_attempt_and_gemini_source(tmp_path):
+    client = _FakeClient([VALID_PLAN_JSON])
+    result = planner.plan_from_query_with_meta("Any water here?", TEST_SCENE, client=client, cache_dir=tmp_path)
+    assert result.attempts == 1
+    assert result.source == "gemini"
+    assert result.plan[0].tool == "count"
+
+
+def test_with_meta_reports_the_real_attempt_count_after_a_retry(tmp_path):
+    bad = json.dumps([{"id": "s1", "tool": "levitate", "parameters": {}}])
+    client = _FakeClient([bad, VALID_PLAN_JSON])
+    result = planner.plan_from_query_with_meta("Any water here?", TEST_SCENE, client=client, cache_dir=tmp_path)
+    assert result.attempts == 2
+    assert result.source == "gemini"
+
+
+def test_with_meta_cache_hit_reports_one_attempt_and_cache_source(tmp_path):
+    client = _FakeClient([VALID_PLAN_JSON])
+    planner.plan_from_query_with_meta("Any water here?", TEST_SCENE, client=client, cache_dir=tmp_path)
+
+    poison_client = _FakeClient([AssertionError("must not be called")])
+    result = planner.plan_from_query_with_meta(
+        "Any water here?", TEST_SCENE, client=poison_client, cache_dir=tmp_path,
+    )
+    assert result.attempts == 1
+    assert result.source == "cache"
+
+
+def test_with_meta_keyword_fallback_reports_one_attempt_and_that_source(tmp_path, monkeypatch):
+    monkeypatch.setattr(planner, "GOOGLE_API_KEY", None)
+    result = planner.plan_from_query_with_meta("How many water bodies?", TEST_SCENE, cache_dir=tmp_path)
+    assert result.attempts == 1
+    assert result.source == "keyword_fallback"
+
+
+def test_plan_from_query_is_a_thin_wrapper_over_with_meta(tmp_path):
+    client = _FakeClient([VALID_PLAN_JSON])
+    plan = plan_from_query("Any water here?", TEST_SCENE, client=client, cache_dir=tmp_path)
+
+    # Cached now -- with_meta's own cache-hit path returns the identical plan.
+    result = planner.plan_from_query_with_meta(
+        "Any water here?", TEST_SCENE, client=_FakeClient([AssertionError("must not be called")]),
+        cache_dir=tmp_path,
+    )
+    assert result.plan.model_dump() == plan.model_dump()
+
+
 def test_cache_key_differs_by_scene(tmp_path):
     other_scene = TEST_SCENE.model_copy(update={"gsd_metres": 30.0})
     client_a = _FakeClient([VALID_PLAN_JSON])

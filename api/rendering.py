@@ -13,6 +13,7 @@ from rasterio import features
 from rasterio.transform import Affine
 
 from agent.tasks import ClassificationResult
+from confidence import engine as confidence_engine
 from evidence.ops import ClassId, class_mask
 from evidence.schema import Feature, FeatureCollection, Polygon, SourceConfidence, TraceStep
 
@@ -157,10 +158,33 @@ def build_answer(full_trace: list[TraceStep], classes: dict[int, str]):
 def build_confidence(classification: ClassificationResult, full_trace: list[TraceStep]) -> list[SourceConfidence]:
     """One entry for the task classification, one for the final tool call
     -- every number here already existed in the trace; this just repacks
-    it into evidence.schema's confidence contract."""
+    it into evidence.schema's confidence contract.
+
+    When agent/executor.py ran confidence/engine.py for the final step
+    (recorded as a separate `confidence:{step_id}` trace entry -- see
+    executor.run()'s own docstring), two more entries are added: the
+    engine's single calibrated number (already, via that same executor
+    wiring, what `tool:{final_step.tool}` above reports too -- this entry
+    just names its real source explicitly) and confidence/engine.py's own
+    DETERMINISTIC_GEOMETRY_CONFIDENCE (always 1.0), so "the mask's own
+    geometry arithmetic is exact" and "how much to trust the mask itself"
+    are always two separately labelled, never conflated, numbers."""
     confidences = [SourceConfidence(source="agent.tasks.classify_task", confidence=classification.confidence)]
     execute_steps = [step for step in full_trace if step.task.startswith("execute:")]
     if execute_steps:
         final_step = execute_steps[-1]
         confidences.append(SourceConfidence(source=f"tool:{final_step.tool}", confidence=final_step.confidence))
+
+        final_step_id = final_step.task.split(":", 1)[1]
+        confidence_step = next(
+            (step for step in full_trace if step.task == f"confidence:{final_step_id}"), None
+        )
+        if confidence_step is not None:
+            confidences.append(SourceConfidence(
+                source="confidence_engine.calibrated", confidence=confidence_step.output["calibrated"],
+            ))
+            confidences.append(SourceConfidence(
+                source=confidence_engine.DETERMINISTIC_GEOMETRY_SOURCE,
+                confidence=confidence_step.output["geometry_confidence"],
+            ))
     return confidences

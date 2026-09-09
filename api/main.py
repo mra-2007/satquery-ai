@@ -85,8 +85,9 @@ from fastapi.responses import Response
 
 from agent.dsl import PlanValidationError, validate
 from agent.executor import ExecutorError, run as run_plan
-from agent.planner import PlannerError, SceneDescriptor, plan_from_query
+from agent.planner import PlannerError, SceneDescriptor, plan_from_query_with_meta
 from agent.tasks import classify_task
+from confidence.engine import REFUSAL_THRESHOLD
 from api.database import get_connection
 from api.rendering import build_answer, build_confidence, build_geometry
 from api.schemas import (
@@ -550,10 +551,15 @@ def query_scene(request: QueryRequest) -> QueryResponse:
     )
 
     classification = classify_task(request.query)
+    session, config = _get_inference_session()
     try:
-        plan = plan_from_query(request.query, scene)
+        plan_result = plan_from_query_with_meta(request.query, scene)
+        plan = plan_result.plan
         validate(plan)
-        _, exec_trace = run_plan(plan, metadata, mask=mask, before=before, after=after, stack=stack, classes=classes)
+        _, exec_trace = run_plan(
+            plan, metadata, mask=mask, before=before, after=after, stack=stack, classes=classes,
+            session=session, config=config, plan_attempts=plan_result.attempts,
+        )
     except (PlannerError, PlanValidationError, ExecutorError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -562,6 +568,23 @@ def query_scene(request: QueryRequest) -> QueryResponse:
     final_step = next(step for step in reversed(full_trace) if step.task.startswith("execute:"))
     geometry = build_geometry(mask, classes, final_step)
     confidence = build_confidence(classification, full_trace)
+
+    # confidence/engine.py's own empirically-set REFUSAL_THRESHOLD (see its
+    # module docstring for why 0.55, not a hardcoded 90%) -- reuses the
+    # SAME `limitation` channel the capability guardrail already populates
+    # (AnswerPanel.tsx already renders whichever one fired as "Exact answer
+    # withheld"), rather than inventing a second, parallel refusal signal.
+    # A guardrail limitation, if one also fired, is kept -- both are real,
+    # independent reasons to distrust this specific number.
+    confidence_step = next((step for step in full_trace if step.task == f"confidence:{final_step.task.split(':', 1)[1]}"), None)
+    if confidence_step is not None and confidence_step.output["calibrated"] < REFUSAL_THRESHOLD:
+        low_confidence_note = (
+            f"Calibrated confidence {confidence_step.output['calibrated']:.2f} is below the empirical "
+            f"refusal threshold ({REFUSAL_THRESHOLD:.2f} -- see confidence/engine.py's own docstring for "
+            "how that bar was set from real benchmark accuracy, not a hardcoded 90%). Treat this answer as "
+            "unreliable, most likely due to weak or ambiguous segmentation for this class in this scene."
+        )
+        limitation = f"{limitation} {low_confidence_note}" if limitation else low_confidence_note
 
     evidence = Evidence(value=value, units=units, geometry=geometry, confidence=confidence,
                          execution_trace=full_trace)

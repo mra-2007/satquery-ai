@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -476,6 +477,83 @@ def _fallback_plan(tool: str, parameters: dict) -> Plan:
 # --- Main entry point ---------------------------------------------------------
 
 
+@dataclass
+class PlanResult:
+    """plan_from_query()'s own return value, plus the metadata
+    confidence/engine.py's plan_validity() needs -- how many Gemini
+    attempts this plan took (1 = valid on the first response) and which
+    layer of the three-layer resilience scheme actually produced it.
+    `attempts` is always 1 for a cache hit or a keyword-fallback plan --
+    neither one retried anything, so plan_validity(1) == 1.0 is the
+    honest score for both, not "unknown"."""
+
+    plan: Plan
+    attempts: int
+    source: str  # "cache" | "gemini" | "keyword_fallback"
+
+
+def plan_from_query_with_meta(
+    query: str,
+    scene: SceneDescriptor,
+    *,
+    client: Any = None,
+    model: str = GEMINI_MODEL,
+    max_retries: int = MAX_RETRIES,
+    cache_dir: Path | None = None,
+) -> PlanResult:
+    """Turn `query` into a validated Plan for `scene`, without ever sending
+    the image -- same three-layer resilience as plan_from_query() (its own
+    docstring), but returned alongside the attempt count/source
+    confidence/engine.py's plan_validity() needs. plan_from_query() itself
+    is a thin wrapper over this that discards that metadata, for every
+    caller that doesn't need it.
+    """
+    cache_dir = cache_dir or DEFAULT_CACHE_DIR
+    cache_path = cache_dir / f"{_cache_key(query, scene)}.json"
+
+    cached = _read_cache(cache_path)
+    if cached is not None:
+        return PlanResult(plan=cached, attempts=1, source="cache")
+
+    if client is None and GOOGLE_API_KEY is None:
+        plan = _keyword_fallback(query, scene)
+        _write_cache(cache_path, plan)
+        return PlanResult(plan=plan, attempts=1, source="keyword_fallback")
+
+    if client is None:
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+
+    prior_plan_text: str | None = None
+    prior_error: str | None = None
+    last_error: str | None = None
+
+    for attempt in range(1, max_retries + 1):
+        prompt = _build_prompt(query, scene, prior_plan_text=prior_plan_text, prior_error=prior_error)
+
+        try:
+            text = _call_gemini(client, model, prompt)
+        except Exception:
+            plan = _keyword_fallback(query, scene)
+            _write_cache(cache_path, plan)
+            return PlanResult(plan=plan, attempts=1, source="keyword_fallback")
+
+        try:
+            plan = Plan.model_validate(_extract_json(text))
+            validate(plan)
+        except Exception as exc:
+            last_error = str(exc)
+            prior_plan_text = text
+            prior_error = last_error
+            continue
+
+        _write_cache(cache_path, plan)
+        return PlanResult(plan=plan, attempts=attempt, source="gemini")
+
+    raise PlannerError(
+        f"Gemini did not produce a valid plan for {query!r} after {max_retries} attempts: {last_error}"
+    )
+
+
 def plan_from_query(
     query: str,
     scene: SceneDescriptor,
@@ -497,48 +575,11 @@ def plan_from_query(
     available at all, falls back to a deterministic keyword parser instead
     of retrying a dead connection. A successful plan, from any source, is
     written to the cache before it's returned.
+
+    A thin wrapper over plan_from_query_with_meta() -- use that instead
+    when the attempt count/source is needed (e.g. to feed
+    confidence/engine.py's plan_validity()).
     """
-    cache_dir = cache_dir or DEFAULT_CACHE_DIR
-    cache_path = cache_dir / f"{_cache_key(query, scene)}.json"
-
-    cached = _read_cache(cache_path)
-    if cached is not None:
-        return cached
-
-    if client is None and GOOGLE_API_KEY is None:
-        plan = _keyword_fallback(query, scene)
-        _write_cache(cache_path, plan)
-        return plan
-
-    if client is None:
-        client = genai.Client(api_key=GOOGLE_API_KEY)
-
-    prior_plan_text: str | None = None
-    prior_error: str | None = None
-    last_error: str | None = None
-
-    for _attempt in range(max_retries):
-        prompt = _build_prompt(query, scene, prior_plan_text=prior_plan_text, prior_error=prior_error)
-
-        try:
-            text = _call_gemini(client, model, prompt)
-        except Exception:
-            plan = _keyword_fallback(query, scene)
-            _write_cache(cache_path, plan)
-            return plan
-
-        try:
-            plan = Plan.model_validate(_extract_json(text))
-            validate(plan)
-        except Exception as exc:
-            last_error = str(exc)
-            prior_plan_text = text
-            prior_error = last_error
-            continue
-
-        _write_cache(cache_path, plan)
-        return plan
-
-    raise PlannerError(
-        f"Gemini did not produce a valid plan for {query!r} after {max_retries} attempts: {last_error}"
-    )
+    return plan_from_query_with_meta(
+        query, scene, client=client, model=model, max_retries=max_retries, cache_dir=cache_dir,
+    ).plan

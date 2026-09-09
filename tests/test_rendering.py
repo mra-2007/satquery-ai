@@ -5,8 +5,11 @@ dict repr into the UI as the answer text (a real bug this project hit and
 fixed while wiring evidence/fusion.py's frontend rendering)."""
 
 import numpy as np
+import pytest
 
-from api.rendering import build_answer, build_geometry
+from agent.tasks import ClassificationResult
+from api.rendering import build_answer, build_confidence, build_geometry
+from confidence.engine import DETERMINISTIC_GEOMETRY_SOURCE
 from evidence.schema import TraceStep
 
 CLASSES = {0: "Urban fabric", 1: "Inland waters"}
@@ -192,3 +195,62 @@ def test_build_answer_conversational_value_and_text_are_the_real_reply():
     assert units is None
     assert limitation is None
     assert not value.startswith("{")
+
+
+# --- build_confidence: classify_task + final tool, plus confidence/engine.py's
+# calibrated composite and its always-1.0 deterministic-geometry entry when
+# agent/executor.py recorded one -------------------------------------------
+
+
+def _classification(confidence: float = 0.9) -> ClassificationResult:
+    return ClassificationResult(label="vqa", confidence=confidence, trace=[])
+
+
+def _presence_step(confidence: float = 1.0) -> TraceStep:
+    return TraceStep(
+        task="execute:s1", tool="presence", parameters={"class_id": 1, "min_area_m2": 0},
+        output=True, confidence=confidence,
+    )
+
+
+def _confidence_step(calibrated: float = 0.61, geometry_confidence: float = 1.0) -> TraceStep:
+    return TraceStep(
+        task="confidence:s1", tool="confidence.engine.compute_confidence", parameters={"class_id": 1},
+        output={
+            "calibrated": calibrated, "components": {}, "weights_used": {},
+            "geometry_confidence": geometry_confidence, "refused": calibrated < 0.55,
+        },
+        confidence=calibrated,
+    )
+
+
+def test_build_confidence_without_a_confidence_step_matches_the_old_two_entries():
+    confidences = build_confidence(_classification(0.9), [_presence_step(1.0)])
+    sources = [c.source for c in confidences]
+    assert sources == ["agent.tasks.classify_task", "tool:presence"]
+    assert confidences[0].confidence == pytest.approx(0.9)
+    assert confidences[1].confidence == pytest.approx(1.0)
+
+
+def test_build_confidence_with_a_confidence_step_adds_calibrated_and_geometry_entries():
+    trace = [_presence_step(0.61), _confidence_step(calibrated=0.61)]
+    confidences = build_confidence(_classification(0.9), trace)
+    by_source = {c.source: c.confidence for c in confidences}
+
+    assert by_source["agent.tasks.classify_task"] == pytest.approx(0.9)
+    assert by_source["tool:presence"] == pytest.approx(0.61)  # the executor already overwrote this
+    assert by_source["confidence_engine.calibrated"] == pytest.approx(0.61)
+    assert by_source[DETERMINISTIC_GEOMETRY_SOURCE] == pytest.approx(1.0)
+
+
+def test_build_confidence_geometry_entry_is_always_one_even_when_calibrated_is_low():
+    trace = [_presence_step(0.2), _confidence_step(calibrated=0.2)]
+    confidences = build_confidence(_classification(0.9), trace)
+    by_source = {c.source: c.confidence for c in confidences}
+    assert by_source["confidence_engine.calibrated"] == pytest.approx(0.2)
+    assert by_source[DETERMINISTIC_GEOMETRY_SOURCE] == 1.0
+
+
+def test_build_confidence_with_no_execute_step_at_all():
+    confidences = build_confidence(_classification(0.7), [])
+    assert [c.source for c in confidences] == ["agent.tasks.classify_task"]

@@ -2,11 +2,17 @@
 evidence/ops.py and evidence/change.py implementations, and the resulting
 ExecutionTrace's replayability."""
 
+from dataclasses import dataclass
+from pathlib import Path
+
 import numpy as np
 import pytest
 
+from agent import executor as executor_module
 from agent.dsl import Plan, PlanValidationError
 from agent.executor import ExecutionTrace, ExecutorError, run
+from agent.vocabulary import SEGMENTATION_CLASSES
+from confidence.engine import ConfidenceResult, plan_validity
 from evidence.change import ChangeReport
 from evidence.fusion import FusionResult
 from evidence.metadata import MetadataResult
@@ -487,3 +493,203 @@ def test_run_is_replayable_without_the_llm():
 
     assert result_1 == result_2
     assert [e.model_dump() for e in trace_1] == [e.model_dump() for e in trace_2]
+
+
+# --- confidence/engine.py wiring ----------------------------------------------
+# Gated on stack+session+config ALL being given (see run()'s own docstring):
+# without them, every step keeps dsl.execute()'s own exact 1.0 unchanged --
+# already covered by every test above, none of which pass those three.
+
+
+@dataclass
+class _FakeInferenceResult:
+    probabilities: np.ndarray
+    mask: np.ndarray
+
+
+def _fake_session_config_stack():
+    # Real class objects aren't needed -- executor.run() only ever passes
+    # these straight through to perception.infer.segment_image, which is
+    # monkeypatched in every test below, so they're pure sentinels here.
+    return object(), object(), np.zeros((16, 10, 10), dtype=np.float32)
+
+
+def _patch_segment_image(monkeypatch, probabilities: np.ndarray):
+    # tta_stability() calls this 8 more times (once per D4 transform) on
+    # top of the one call run() itself makes for the perception margin --
+    # every call gets the SAME probabilities/mask here regardless of which
+    # transform was requested, which is fine: a fake segment_image doesn't
+    # need to be transform-aware for tests that only check the WIRING
+    # (does the confidence engine get called, does its output reach the
+    # trace) rather than the D4 geometry itself (covered separately, and
+    # exactly, by test_confidence_engine.py's own D4 round-trip tests).
+    mask = np.argmax(probabilities, axis=0)
+    monkeypatch.setattr(
+        "perception.infer.segment_image",
+        lambda stack, sensor, *, session, config: _FakeInferenceResult(probabilities=probabilities, mask=mask),
+    )
+
+
+def _fake_confidence_result(calibrated: float = 0.61) -> ConfidenceResult:
+    return ConfidenceResult(
+        calibrated=calibrated,
+        components={"perception_margin": calibrated, "tta_stability": None,
+                    "cross_source_agreement": None, "resolution_suitability": 1.0, "plan_validity": None},
+        weights_used={"perception_margin": 0.667, "resolution_suitability": 0.333},
+        refused=calibrated < 0.55,
+    )
+
+
+def test_run_overrides_confidence_when_stack_session_config_all_given(monkeypatch):
+    session, config, stack = _fake_session_config_stack()
+    probabilities = np.zeros((19, 10, 10), dtype=np.float32)
+    probabilities[WATER] = 1.0
+    _patch_segment_image(monkeypatch, probabilities)
+    monkeypatch.setattr(executor_module.confidence_engine, "compute_confidence", lambda inputs: _fake_confidence_result(0.61))
+
+    plan = Plan.model_validate([{"id": "s1", "tool": "presence", "parameters": {"class_id": WATER, "min_area_m2": 0}}])
+    _, trace = run(plan, GSD_10M, mask=_water_mask(), stack=stack, session=session, config=config)
+
+    execute_step = next(e for e in trace if e.task == "execute:s1")
+    assert execute_step.confidence == pytest.approx(0.61)  # no longer the hardcoded 1.0
+
+
+def test_run_appends_a_confidence_trace_step_with_the_full_breakdown(monkeypatch):
+    session, config, stack = _fake_session_config_stack()
+    _patch_segment_image(monkeypatch, np.full((19, 10, 10), 1.0 / 19, dtype=np.float32))
+    fake_result = _fake_confidence_result(0.42)
+    monkeypatch.setattr(executor_module.confidence_engine, "compute_confidence", lambda inputs: fake_result)
+
+    plan = Plan.model_validate([{"id": "s1", "tool": "presence", "parameters": {"class_id": WATER, "min_area_m2": 0}}])
+    _, trace = run(plan, GSD_10M, mask=_water_mask(), stack=stack, session=session, config=config)
+
+    confidence_step = next(e for e in trace if e.task == "confidence:s1")
+    assert confidence_step.tool == "confidence.engine.compute_confidence"
+    assert confidence_step.confidence == pytest.approx(0.42)
+    assert confidence_step.output["calibrated"] == pytest.approx(0.42)
+    assert confidence_step.output["components"] == fake_result.components
+    assert confidence_step.output["geometry_confidence"] == 1.0  # always, per DETERMINISTIC_GEOMETRY_CONFIDENCE
+    assert confidence_step.output["refused"] is True  # 0.42 < REFUSAL_THRESHOLD
+
+
+def test_run_confidence_wiring_leaves_non_qualifying_tools_untouched(monkeypatch):
+    session, config, stack = _fake_session_config_stack()
+    _patch_segment_image(monkeypatch, np.full((19, 10, 10), 1.0 / 19, dtype=np.float32))
+    monkeypatch.setattr(executor_module.confidence_engine, "compute_confidence", lambda inputs: _fake_confidence_result())
+
+    plan = Plan.model_validate([{"id": "cap1", "tool": "caption", "parameters": {}}])
+    _, trace = run(plan, GSD_10M, mask=_water_mask(), stack=stack, session=session, config=config)
+
+    execute_step = next(e for e in trace if e.task == "execute:cap1")
+    assert execute_step.confidence == pytest.approx(1.0)  # caption isn't a confidence-qualifying tool
+    assert not any(e.task == "confidence:cap1" for e in trace)
+
+
+def test_run_adjacency_confidence_uses_the_union_of_both_classes(monkeypatch):
+    session, config, stack = _fake_session_config_stack()
+    _patch_segment_image(monkeypatch, np.full((19, 10, 10), 1.0 / 19, dtype=np.float32))
+    captured_inputs = []
+
+    def fake_compute_confidence(inputs):
+        captured_inputs.append(inputs)
+        return _fake_confidence_result()
+
+    monkeypatch.setattr(executor_module.confidence_engine, "compute_confidence", fake_compute_confidence)
+
+    plan = Plan.model_validate([
+        {"id": "a1", "tool": "adjacency", "parameters": {"class_a": WATER, "class_b": URBAN, "distance_m": 0}},
+    ])
+    run(plan, GSD_10M, mask=_water_mask(), stack=stack, session=session, config=config)
+
+    assert captured_inputs[0].class_id == [WATER, URBAN]
+
+
+def test_run_without_stack_session_or_config_never_calls_the_confidence_engine(monkeypatch):
+    called = []
+    monkeypatch.setattr(executor_module.confidence_engine, "compute_confidence", lambda inputs: called.append(1))
+
+    result, trace = run(_ops_plan(), GSD_10M, mask=_water_mask())  # no stack/session/config
+
+    assert called == []
+    entry = next(e for e in trace if e.task == "execute:s1")
+    assert entry.confidence == pytest.approx(1.0)  # unchanged, exactly today's existing behaviour
+
+
+def test_run_confidence_wiring_passes_plan_attempts_through(monkeypatch):
+    # Uses the REAL confidence_engine.compute_confidence (not mocked), to
+    # prove plan_attempts genuinely flows all the way through -- so
+    # evidence.fusion.fuse_evidence (which needs a real ClassConfig for its
+    # classification-head lookup, not the bare sentinel _fake_session_config_
+    # stack() returns) is stubbed out instead, the one real-model call this
+    # particular test doesn't care about.
+    session, config, stack = _fake_session_config_stack()
+    _patch_segment_image(monkeypatch, np.full((19, 10, 10), 1.0 / 19, dtype=np.float32))
+
+    @dataclass
+    class _FakeFusionResult:
+        agreement_fraction: float
+
+    monkeypatch.setattr("evidence.fusion.fuse_evidence", lambda *a, **k: _FakeFusionResult(agreement_fraction=0.5))
+
+    plan = Plan.model_validate([{"id": "s1", "tool": "size", "parameters": {"class_id": WATER}}])
+    _, trace = run(
+        plan, GSD_10M, mask=_water_mask(), stack=stack, session=session, config=config, plan_attempts=3,
+    )
+
+    confidence_step = next(e for e in trace if e.task == "confidence:s1")
+    assert confidence_step.output["components"]["plan_validity"] == pytest.approx(plan_validity(3))
+
+
+# --- real model, end to end (no monkeypatching) -------------------------------
+# Mirrors tests/test_infer.py's own module-scoped real-session fixture --
+# a genuine, if slow-ish (~1-2s per test), integration check that the full
+# wiring (re-derived probabilities, 8-way TTA, evidence/fusion.py
+# agreement, all against the REAL model) doesn't crash end to end and
+# produces a sane, in-range calibrated number -- exact values aren't
+# asserted since real model output on a real patch isn't hand-computable.
+
+
+@pytest.fixture(scope="module")
+def real_session():
+    from perception import infer
+    return infer.load_model()
+
+
+@pytest.fixture(scope="module")
+def real_config():
+    from perception import infer
+    return infer.load_class_config()
+
+
+@pytest.fixture(scope="module")
+def real_stack() -> np.ndarray:
+    patches_dir = Path(__file__).resolve().parent.parent / "data" / "demo_patches"
+    npz_path = sorted(patches_dir.glob("*.npz"))[0]
+    data = np.load(npz_path, allow_pickle=True)
+    return data["stack"][:16].astype(np.float32)
+
+
+def test_run_confidence_wiring_end_to_end_against_the_real_model(real_session, real_config, real_stack):
+    from perception import infer
+
+    real_mask = infer.segment_image(real_stack, "fused", session=real_session, config=real_config).mask
+    present_class = int(np.bincount(real_mask.flatten()).argmax())  # whatever's actually in this patch
+
+    classes = dict(enumerate(SEGMENTATION_CLASSES))
+    plan = Plan.model_validate([{"id": "s1", "tool": "presence", "parameters": {"class_id": present_class, "min_area_m2": 0}}])
+
+    _, trace = run(
+        plan, {"gsd_metres": 10.0}, mask=real_mask, stack=real_stack,
+        session=real_session, config=real_config, classes=classes, plan_attempts=1,
+    )
+
+    execute_step = next(e for e in trace if e.task == "execute:s1")
+    confidence_step = next(e for e in trace if e.task == "confidence:s1")
+
+    assert 0.0 <= execute_step.confidence <= 1.0
+    assert execute_step.confidence == pytest.approx(confidence_step.output["calibrated"])
+    assert confidence_step.output["geometry_confidence"] == 1.0
+    assert confidence_step.output["components"]["perception_margin"] is not None
+    assert confidence_step.output["components"]["tta_stability"] is not None
+    assert confidence_step.output["components"]["cross_source_agreement"] is not None
+    assert confidence_step.output["components"]["plan_validity"] == pytest.approx(1.0)

@@ -26,7 +26,9 @@ import numpy as np
 
 from agent.dsl import Plan, execute as _dsl_execute
 from agent.guardrail import apply_capability_guardrail
+from confidence import engine as confidence_engine
 from evidence import change, fusion, metadata as metadata_tool, ops
+from evidence.ops import ClassId
 from evidence.schema import TraceStep
 from tools import caption as caption_tool
 from tools import conversational as conversational_tool
@@ -39,10 +41,42 @@ from tools import verifier as verifier_tool
 # call-level context, never LLM-controlled parameters (see agent/registry.py).
 _OPS_TOOLS = ("count", "size", "presence", "adjacency")
 
+# Tools whose answer is ABOUT one or two specific classes -- the ones
+# confidence/engine.py's per-class signals (perception margin, TTA
+# stability, resolution suitability, cross-source agreement) can actually
+# be computed for. change/caption/cross_modal/metadata/conversational/
+# ground/verify all keep their existing (dsl.execute()'s own, always 1.0)
+# confidence unchanged -- there is no single "answer class" for a change
+# summary or a free-text caption to compute a per-class signal about.
+_CONFIDENCE_QUALIFYING_TOOLS = ("count", "size", "presence", "adjacency", "intersect", "fusion")
+
 
 class ExecutorError(RuntimeError):
     """Raised when a plan needs a raster (mask, or before/after) that this
     run() call didn't provide."""
+
+
+def _answer_class_id(tool: str, parameters: dict) -> ClassId | None:
+    """Which class_id(s) this step's answer is actually about.
+    count/size/presence/fusion ask about one (agent/vocabulary.py's
+    generic nouns already make that one a list sometimes -- e.g. "forest"
+    -> several real classes -- confidence/engine.py's per-class signals
+    already handle a list the same union-aware way evidence/ops.py does).
+    adjacency/intersect ask about TWO classes at once (does A touch B? /
+    how much of A became B?) -- both contribute, combined into one list,
+    duplicates removed. Returns None for a step this doesn't apply to, or
+    whose class parameters are missing (should not happen once
+    agent.dsl.validate() has already run, but never assumed)."""
+    if tool in ("count", "size", "presence", "fusion"):
+        return parameters.get("class_id")
+    if tool in ("adjacency", "intersect"):
+        class_a, class_b = parameters.get("class_a"), parameters.get("class_b")
+        if class_a is None or class_b is None:
+            return None
+        a_list = class_a if isinstance(class_a, list) else [class_a]
+        b_list = class_b if isinstance(class_b, list) else [class_b]
+        return a_list + [c for c in b_list if c not in a_list]
+    return None
 
 
 def _summarize(output: Any) -> Any:
@@ -165,6 +199,9 @@ def run(
     after: np.ndarray | None = None,
     stack: np.ndarray | None = None,
     classes: dict[int, str] | None = None,
+    session: Any = None,
+    config: Any = None,
+    plan_attempts: int | None = None,
 ) -> tuple[dict[str, Any], ExecutionTrace]:
     """Run every step of `plan` against evidence/ops.py
     (count/size/presence/adjacency, over `mask`), evidence/change.py
@@ -189,6 +226,21 @@ def run(
     `size` step, and the trace records why. Without `classes` there's no
     way to know what a class_id represents, so the guardrail is skipped --
     pass it whenever you have it.
+
+    `session`/`config` (a loaded perception.infer session/ClassConfig),
+    together with `stack`, feed confidence/engine.py's calibrated
+    confidence for every _CONFIDENCE_QUALIFYING_TOOLS step (count/size/
+    presence/adjacency/intersect/fusion): a fresh probabilities array is
+    derived once (not per step) for the perception-margin signal, plus
+    8-way TTA and evidence/fusion.py cross-source agreement, and
+    `plan_attempts` (agent.planner.PlanResult.attempts -- how many Gemini
+    attempts the plan itself took) adds the plan-validity signal on top
+    when given. Recalibration only engages when `stack`+`session`+
+    `config` are ALL given -- a real, live model signal (the perception
+    margin) is always the anchor whenever a step's confidence is
+    overridden at all; without one, every step keeps dsl.execute()'s own
+    exact 1.0, unchanged. Passing none of these three is exactly today's
+    existing behaviour -- purely additive, never a new required argument.
 
     Returns (result, trace): `result` maps each step's id to its full,
     unsummarized output (e.g. the actual change.ChangeReport, not a
@@ -279,10 +331,57 @@ def run(
 
     dsl_result = _dsl_execute(plan, tool_functions)
 
-    trace_steps = guardrail_trace + [
-        step.model_copy(update={"output": _summarize(step.output)})
+    # Re-derive probabilities ONCE (not per qualifying step) for
+    # confidence/engine.py's perception_margin -- only when the plan
+    # actually has a step that needs it, so a change/caption/metadata-only
+    # plan never pays for an extra, unused inference pass.
+    needs_probabilities = stack is not None and session is not None and config is not None and any(
+        step.tool in _CONFIDENCE_QUALIFYING_TOOLS and _answer_class_id(step.tool, step.parameters) is not None
         for step in dsl_result.trace
-    ]
+    )
+    probabilities = None
+    if needs_probabilities:
+        from perception import infer
+        probabilities = infer.segment_image(stack, "fused", session=session, config=config).probabilities
+
+    trace_steps: list[TraceStep] = list(guardrail_trace)
+    for step in dsl_result.trace:
+        updates: dict[str, Any] = {"output": _summarize(step.output)}
+        confidence_result = None
+
+        class_id = _answer_class_id(step.tool, step.parameters) if step.tool in _CONFIDENCE_QUALIFYING_TOOLS else None
+        # Only recalibrate when a real, live model signal (probabilities,
+        # from a real stack+session+config) is actually available -- see
+        # this function's own docstring. Without one, resolution_suitability
+        # alone (a static table lookup, no live model output at all) is too
+        # thin a basis to override dsl.execute()'s honest, unconditional
+        # 1.0; every step then keeps that exact value, unchanged.
+        if class_id is not None and probabilities is not None:
+            inputs = confidence_engine.ConfidenceInputs(
+                class_id=class_id, metadata=metadata, classes=classes,
+                probabilities=probabilities, stack=stack, sensor="fused",
+                session=session, config=config, plan_attempts=plan_attempts,
+            )
+            confidence_result = confidence_engine.compute_confidence(inputs)
+            updates["confidence"] = confidence_result.calibrated
+
+        trace_steps.append(step.model_copy(update=updates))
+
+        if confidence_result is not None:
+            step_id = step.task.split(":", 1)[1]
+            trace_steps.append(TraceStep(
+                task=f"confidence:{step_id}",
+                tool="confidence.engine.compute_confidence",
+                parameters={"class_id": class_id},
+                output={
+                    "calibrated": confidence_result.calibrated,
+                    "components": confidence_result.components,
+                    "weights_used": confidence_result.weights_used,
+                    "geometry_confidence": confidence_result.geometry_confidence,
+                    "refused": confidence_result.refused,
+                },
+                confidence=confidence_result.calibrated,
+            ))
 
     # Per CLAUDE.md's "No pixel, no claim": tools/caption.py's `caption`
     # field is the one place in this codebase where text can genuinely
