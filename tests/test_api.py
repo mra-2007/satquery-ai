@@ -63,13 +63,15 @@ def test_list_scenes_returns_the_demo_patches(client):
     # point of this task), so scope to source="demo" rather than assuming
     # /scenes returns exactly the demo patches and nothing else. Startup
     # also seeds one demo 'change' pair from data/oscd/ (see
-    # api.scenes.ensure_demo_change_scene_loaded) alongside the 15
-    # data/demo_patches/*.npz scenes, so demo scenes now split into two
-    # distinct kinds/shapes -- checked separately below.
+    # api.scenes.ensure_demo_change_scene_loaded) and one demo
+    # 'cross_modal' scene from data/demo_patches/*.npz (see
+    # ensure_demo_cross_modal_scene_loaded) alongside the 15
+    # data/demo_patches/*.npz 'single' scenes, so demo scenes now split
+    # into three distinct kinds/shapes -- checked separately below.
     response = client.get("/scenes")
     assert response.status_code == 200
     demo_scenes = [s for s in response.json() if s["source"] == "demo"]
-    assert len(demo_scenes) == 16  # 15 data/demo_patches/*.npz + 1 seeded OSCD change pair
+    assert len(demo_scenes) == 17  # 15 single + 1 seeded OSCD change pair + 1 seeded cross_modal scene
 
     patch_scenes = [s for s in demo_scenes if s["kind"] == "single"]
     assert len(patch_scenes) == 15
@@ -83,6 +85,12 @@ def test_list_scenes_returns_the_demo_patches(client):
     assert len(change_scenes) == 1
     assert change_scenes[0]["sensor"] == "optical"
     assert change_scenes[0]["gsd_metres"] == 10.0
+
+    cross_modal_scenes = [s for s in demo_scenes if s["kind"] == "cross_modal"]
+    assert len(cross_modal_scenes) == 1
+    assert cross_modal_scenes[0]["sensor"] == "fused"
+    assert cross_modal_scenes[0]["gsd_metres"] == 10.0
+    assert cross_modal_scenes[0]["filename"].endswith(".npz")
 
 
 # --- GET /scenes/{id}/image, /mask, /legend --------------------------------------
@@ -477,6 +485,80 @@ def test_change_phrased_queries_resolve_via_the_keyword_fallback(client):
         r = client.post("/query", json={"scene_id": scene_id, "query": query})
         assert r.status_code == 200
         assert isinstance(r.json()["evidence"]["value"], str)
+
+
+# --- GET /scenes/{id}/cross-modal, /cross-modal-mask -----------------------------
+
+
+def _demo_cross_modal_scene_id(client) -> str:
+    return next(s["id"] for s in client.get("/scenes").json() if s["kind"] == "cross_modal")
+
+
+def test_cross_modal_summary_endpoint_returns_real_findings(client):
+    scene_id = _demo_cross_modal_scene_id(client)
+    r = client.get(f"/scenes/{scene_id}/cross-modal")
+    assert r.status_code == 200
+    body = r.json()
+
+    assert body["cloud_simulated"] is False
+    assert body["cloud_fraction"] is None
+    assert body["sensor_status"] == {"optical": "USABLE", "sar": "USABLE", "fused": "USABLE"}
+    assert isinstance(body["summary"], str) and body["summary"]
+    assert len(body["findings"]) > 0
+    for finding in body["findings"]:
+        assert finding["detected_by"]  # at least one sensor found it, by construction
+        assert finding["optical_area_ha"] >= 0
+        assert finding["sar_area_ha"] >= 0
+        assert finding["fused_area_ha"] >= 0
+
+
+def test_cross_modal_summary_cloud_simulation_marks_optical_insufficient(client):
+    scene_id = _demo_cross_modal_scene_id(client)
+    r = client.get(f"/scenes/{scene_id}/cross-modal", params={"cloud_simulation": "true"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["cloud_simulated"] is True
+    assert body["cloud_fraction"] == pytest.approx(0.6)
+    assert body["sensor_status"] == {"optical": "INSUFFICIENT", "sar": "USABLE", "fused": "USABLE"}
+
+
+def test_cross_modal_mask_endpoint_returns_a_real_png_per_sensor(client):
+    scene_id = _demo_cross_modal_scene_id(client)
+    for sensor in ("optical", "sar", "fused"):
+        r = client.get(f"/scenes/{scene_id}/cross-modal-mask", params={"sensor": sensor})
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "image/png"
+        assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_cross_modal_mask_endpoint_cloud_simulation_changes_the_optical_mask(client):
+    scene_id = _demo_cross_modal_scene_id(client)
+    clean = client.get(f"/scenes/{scene_id}/cross-modal-mask", params={"sensor": "optical"}).content
+    clouded = client.get(
+        f"/scenes/{scene_id}/cross-modal-mask", params={"sensor": "optical", "cloud_simulation": "true"},
+    ).content
+    assert clean != clouded  # zeroing 60% of the real optical channels must change the predicted mask
+
+
+def test_cross_modal_image_endpoint_cloud_simulation_changes_the_preview(client):
+    scene_id = _demo_cross_modal_scene_id(client)
+    clean = client.get(f"/scenes/{scene_id}/image").content
+    clouded = client.get(f"/scenes/{scene_id}/image", params={"cloud_simulation": "true"}).content
+    assert clean != clouded
+
+
+def test_cross_modal_phrased_queries_resolve_via_the_keyword_fallback(client):
+    scene_id = _demo_cross_modal_scene_id(client)
+    for query in ("Does the SAR image confirm what the optical image shows?", "Compare the radar and optical."):
+        r = client.post("/query", json={"scene_id": scene_id, "query": query})
+        assert r.status_code == 200
+        assert isinstance(r.json()["evidence"]["value"], str)
+
+
+def test_cross_modal_endpoints_404_for_a_non_cross_modal_scene(client):
+    demo_scene_id = next(s["id"] for s in client.get("/scenes").json() if s["kind"] == "single")
+    assert client.get(f"/scenes/{demo_scene_id}/cross-modal").status_code == 404
+    assert client.get(f"/scenes/{demo_scene_id}/cross-modal-mask").status_code == 404
 
 
 def test_severely_misaligned_pair_falls_back_to_a_single_scene(client):

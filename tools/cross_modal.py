@@ -63,6 +63,9 @@ class CrossModalResult:
     cloud_simulated: bool
     cloud_fraction: float | None
     summary: str
+    # Per-sensor USABLE/INSUFFICIENT verdict for the CROSS-MODAL COMPARISON
+    # view's three OPTICAL/SAR/FUSED toggles -- see _sensor_status().
+    sensor_status: dict[str, str]
 
 
 _ATTRIBUTION_BY_PATTERN: dict[tuple[bool, bool, bool], str] = {
@@ -132,6 +135,22 @@ def _render_summary(findings: list[CrossModalFinding], cloud_simulated: bool) ->
     return " ".join(parts)
 
 
+def _sensor_status(cloud_simulated: bool) -> dict[str, str]:
+    """USABLE/INSUFFICIENT verdict per sensor mode, for the CROSS-MODAL
+    COMPARISON view's three toggles. This is a statement about the INPUT
+    each sensor path actually saw, not a per-finding judgment: when
+    cloud_simulation zeroed the real optical channels (simulate_cloud_cover),
+    the optical-only path saw degraded input and is marked INSUFFICIENT,
+    while SAR -- untouched by the simulated cloud, per its real ability to
+    penetrate cloud cover -- and the fused path -- which still had the
+    intact SAR channels to fall back on -- are both USABLE. Without cloud
+    simulation every sensor saw its real, undegraded input, so all three
+    are USABLE."""
+    if not cloud_simulated:
+        return {"optical": "USABLE", "sar": "USABLE", "fused": "USABLE"}
+    return {"optical": "INSUFFICIENT", "sar": "USABLE", "fused": "USABLE"}
+
+
 def cross_modal_analysis(
     stack: np.ndarray,
     metadata: dict,
@@ -186,4 +205,5 @@ def cross_modal_analysis(
         cloud_simulated=cloud_simulation,
         cloud_fraction=cloud_fraction if cloud_simulation else None,
         summary=_render_summary(findings, cloud_simulation),
+        sensor_status=_sensor_status(cloud_simulation),
     )

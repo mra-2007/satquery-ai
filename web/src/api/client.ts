@@ -2,7 +2,15 @@
 // fabricated fallback values -- a failed request is surfaced as an error,
 // never silently replaced with something invented.
 
-import type { ChangeSummary, LegendEntry, QueryResponse, SceneSummary, UploadResponse } from "./types";
+import type {
+  ChangeSummary,
+  CrossModalSensor,
+  CrossModalSummary,
+  LegendEntry,
+  QueryResponse,
+  SceneSummary,
+  UploadResponse,
+} from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
 
@@ -37,9 +45,12 @@ export function getSceneLegend(sceneId: string): Promise<LegendEntry[]> {
   return request<LegendEntry[]>(`/scenes/${encodeURIComponent(sceneId)}/legend`);
 }
 
-export function sceneImageUrl(sceneId: string, when?: "before" | "after"): string {
-  const query = when ? `?when=${when}` : "";
-  return `${API_URL}/scenes/${encodeURIComponent(sceneId)}/image${query}`;
+export function sceneImageUrl(sceneId: string, when?: "before" | "after", cloudSimulation?: boolean): string {
+  const params = new URLSearchParams();
+  if (when) params.set("when", when);
+  if (cloudSimulation) params.set("cloud_simulation", "true");
+  const query = params.toString();
+  return `${API_URL}/scenes/${encodeURIComponent(sceneId)}/image${query ? `?${query}` : ""}`;
 }
 
 export function sceneMaskUrl(sceneId: string, when?: "before" | "after"): string {
@@ -53,6 +64,23 @@ export function sceneChangeMaskUrl(sceneId: string): string {
 
 export function getSceneChangeSummary(sceneId: string): Promise<ChangeSummary> {
   return request<ChangeSummary>(`/scenes/${encodeURIComponent(sceneId)}/change`);
+}
+
+export function sceneCrossModalMaskUrl(
+  sceneId: string,
+  sensor: CrossModalSensor,
+  cloudSimulation: boolean,
+): string {
+  const params = new URLSearchParams({ sensor });
+  if (cloudSimulation) params.set("cloud_simulation", "true");
+  return `${API_URL}/scenes/${encodeURIComponent(sceneId)}/cross-modal-mask?${params}`;
+}
+
+export function getSceneCrossModal(sceneId: string, cloudSimulation: boolean): Promise<CrossModalSummary> {
+  const params = new URLSearchParams();
+  if (cloudSimulation) params.set("cloud_simulation", "true");
+  const query = params.toString();
+  return request<CrossModalSummary>(`/scenes/${encodeURIComponent(sceneId)}/cross-modal${query ? `?${query}` : ""}`);
 }
 
 export function postQuery(sceneId: string, query: string): Promise<QueryResponse> {

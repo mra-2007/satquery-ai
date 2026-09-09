@@ -36,6 +36,28 @@ export interface ChangeSummary {
   classes: ClassAreaChange[];
 }
 
+export type CrossModalSensor = "optical" | "sar" | "fused";
+
+export type SensorStatus = "USABLE" | "INSUFFICIENT";
+
+export interface CrossModalFinding {
+  class_id: number;
+  class_name: string;
+  optical_area_ha: number;
+  sar_area_ha: number;
+  fused_area_ha: number;
+  detected_by: CrossModalSensor[];
+  attribution: string;
+}
+
+export interface CrossModalSummary {
+  summary: string;
+  cloud_simulated: boolean;
+  cloud_fraction: number | null;
+  sensor_status: Record<CrossModalSensor, SensorStatus>;
+  findings: CrossModalFinding[];
+}
+
 export interface UploadResponse {
   ok: boolean;
   reason: string | null;

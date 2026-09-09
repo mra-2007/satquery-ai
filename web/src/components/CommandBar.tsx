@@ -11,6 +11,11 @@ export const ANALYZE_EXAMPLES = [
 
 export const CHANGE_EXAMPLES = ["What changed between these dates?", "Has built-up area increased?"];
 
+export const CROSS_MODAL_EXAMPLES = [
+  "Does the SAR image confirm what the optical image shows?",
+  "Compare the optical and SAR sensors.",
+];
+
 interface CommandBarProps {
   onSubmit: (query: string) => void;
   loading: boolean;

@@ -55,4 +55,25 @@
   --duration-fast: 120ms;
   --duration-base: 200ms;
   --duration-slow: 250ms;
+
+  /* Z-order for the map area's layered overlays -- see App.tsx/global.css:
+     everything below lives inside .app-main, stacked bottom to top exactly
+     in this order. TopBar/WarningBanner sit outside .app-main entirely
+     (normal document flow, never overlapped), so they need no entry here. */
+  --z-map: 1; /* MapView/ChangeView/CrossModalView -- the base layer */
+  --z-panel: 2; /* Legend, GainLossTable, AnswerPanel, TraceDrawer, VerificationPanel, cross-modal findings */
+  --z-command-bar: 5;
+  --z-modal: 100; /* UploadControl's modal -- portaled to document.body, always on top */
+
+  /* Reserved footprint (height) of the docked CommandBar at the bottom of
+     the map area, INCLUDING its own bottom margin -- every right/left-docked
+     panel stops its bottom edge here (via `bottom: var(--panel-bottom-clearance)`)
+     so no panel can ever be covered by, or cover, the command bar, regardless
+     of viewport height. */
+  /* Generous on purpose: the chip row below the input can wrap to two
+     lines at narrower widths, and this must never be too tight to fit
+     it -- a little extra whitespace above the command bar is harmless,
+     an overlapping panel is not. */
+  --command-bar-footprint: 140px;
+  --panel-bottom-clearance: calc(var(--command-bar-footprint) + var(--space-4));
 }

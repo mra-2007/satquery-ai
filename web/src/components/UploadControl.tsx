@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { uploadScene } from "../api/client";
 import type { UploadResponse } from "../api/types";
@@ -13,6 +14,10 @@ interface UploadControlProps {
 
 export default function UploadControl({ onUploaded }: UploadControlProps) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [anchor, setAnchor] = useState({ top: 0, left: 0 });
+
   const [mode, setMode] = useState<Mode>("single");
   const [pairKind, setPairKind] = useState<PairKind>("cross_modal");
 
@@ -37,6 +42,48 @@ export default function UploadControl({ onUploaded }: UploadControlProps) {
     setAfterDate("");
     setError(null);
   }
+
+  function openPanel() {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) setAnchor({ top: rect.bottom + 8, left: rect.left });
+    setOpen(true);
+  }
+
+  // Portaled to document.body (see the JSX below), so this panel is no
+  // longer a descendant of TopBar's own stacking context -- that was the
+  // actual bug: a z-index set on a descendant is capped by whatever
+  // stacking order its positioned ancestor sits in, so no z-index inside
+  // TopBar could ever out-rank CommandBar's, which sits outside it
+  // entirely. Being a true sibling of everything else means a plain
+  // z-index comparison (see --z-modal in theme.css) is now sufficient, and
+  // it needs its own outside-click/Escape handling since it's no longer a
+  // simple CSS-anchored popover.
+  useEffect(() => {
+    if (!open) return;
+
+    function handlePointerDown(e: MouseEvent) {
+      const target = e.target as Node;
+      if (panelRef.current?.contains(target)) return;
+      if (triggerRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    function handleResize() {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setAnchor({ top: rect.bottom + 8, left: rect.left });
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleResize);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [open]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -78,121 +125,136 @@ export default function UploadControl({ onUploaded }: UploadControlProps) {
   return (
     <div className="upload-control">
       <button
+        ref={triggerRef}
         className="upload-control__trigger"
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => (open ? setOpen(false) : openPanel())}
       >
         + UPLOAD
       </button>
 
-      {open && (
-        <div className="upload-control__popover">
-          <div className="upload-control__mode-toggle">
-            <button
-              type="button"
-              className={mode === "single" ? "is-active" : ""}
-              onClick={() => setMode("single")}
-            >
-              SINGLE
-            </button>
-            <button
-              type="button"
-              className={mode === "pair" ? "is-active" : ""}
-              onClick={() => setMode("pair")}
-            >
-              PAIR
-            </button>
-          </div>
+      {open &&
+        createPortal(
+          <div ref={panelRef} className="upload-control__panel" style={{ top: anchor.top, left: anchor.left }}>
+            <div className="upload-control__panel-header">
+              <span className="label">UPLOAD SCENE</span>
+              <button
+                type="button"
+                className="upload-control__close"
+                onClick={() => setOpen(false)}
+                aria-label="Close upload panel"
+              >
+                ×
+              </button>
+            </div>
 
-          <form className="upload-control__form" onSubmit={handleSubmit}>
-            {mode === "pair" && (
-              <label className="upload-control__field">
-                <span className="label">PAIR TYPE</span>
-                <select value={pairKind} onChange={(e) => setPairKind(e.target.value as PairKind)}>
-                  <option value="cross_modal">Cross-modal (optical + SAR)</option>
-                  <option value="change">Change (bi-temporal)</option>
-                </select>
-              </label>
-            )}
+            <div className="upload-control__mode-toggle">
+              <button
+                type="button"
+                className={mode === "single" ? "is-active" : ""}
+                onClick={() => setMode("single")}
+              >
+                SINGLE
+              </button>
+              <button
+                type="button"
+                className={mode === "pair" ? "is-active" : ""}
+                onClick={() => setMode("pair")}
+              >
+                PAIR
+              </button>
+            </div>
 
-            <fieldset className="upload-control__image-group">
-              <legend className="label">{mode === "pair" ? "IMAGE A" : "IMAGE"}</legend>
-              <input
-                type="file"
-                accept="image/png,image/jpeg,.tif,.tiff"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              />
-              <div className="upload-control__row">
-                <select value={modality} onChange={(e) => setModality(e.target.value)}>
-                  <option value="optical">optical</option>
-                  <option value="sar">sar</option>
-                </select>
-                <input
-                  type="number"
-                  step="0.1"
-                  placeholder="GSD (m)"
-                  value={gsd}
-                  onChange={(e) => setGsd(e.target.value)}
-                />
-              </div>
-              {mode === "pair" && pairKind === "change" && (
-                <div className="upload-control__row">
-                  <input
-                    type="text"
-                    placeholder="Date (optional, e.g. 2019-03)"
-                    value={beforeDate}
-                    onChange={(e) => setBeforeDate(e.target.value)}
-                  />
-                </div>
+            <form className="upload-control__form" onSubmit={handleSubmit}>
+              {mode === "pair" && (
+                <label className="upload-control__field">
+                  <span className="label">PAIR TYPE</span>
+                  <select value={pairKind} onChange={(e) => setPairKind(e.target.value as PairKind)}>
+                    <option value="cross_modal">Cross-modal (optical + SAR)</option>
+                    <option value="change">Change (bi-temporal)</option>
+                  </select>
+                </label>
               )}
-            </fieldset>
 
-            {mode === "pair" && (
               <fieldset className="upload-control__image-group">
-                <legend className="label">IMAGE B</legend>
+                <legend className="label">{mode === "pair" ? "IMAGE A" : "IMAGE"}</legend>
                 <input
                   type="file"
                   accept="image/png,image/jpeg,.tif,.tiff"
-                  onChange={(e) => setFile2(e.target.files?.[0] ?? null)}
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 />
                 <div className="upload-control__row">
-                  <select value={modality2} onChange={(e) => setModality2(e.target.value)}>
-                    <option value="sar">sar</option>
+                  <select value={modality} onChange={(e) => setModality(e.target.value)}>
                     <option value="optical">optical</option>
+                    <option value="sar">sar</option>
                   </select>
                   <input
                     type="number"
                     step="0.1"
                     placeholder="GSD (m)"
-                    value={gsd2}
-                    onChange={(e) => setGsd2(e.target.value)}
+                    value={gsd}
+                    onChange={(e) => setGsd(e.target.value)}
                   />
                 </div>
-                {pairKind === "change" && (
+                {mode === "pair" && pairKind === "change" && (
                   <div className="upload-control__row">
                     <input
                       type="text"
-                      placeholder="Date (optional, e.g. 2023-11)"
-                      value={afterDate}
-                      onChange={(e) => setAfterDate(e.target.value)}
+                      placeholder="Date (optional, e.g. 2019-03)"
+                      value={beforeDate}
+                      onChange={(e) => setBeforeDate(e.target.value)}
                     />
                   </div>
                 )}
               </fieldset>
-            )}
 
-            {error && <p className="upload-control__error">{error}</p>}
+              {mode === "pair" && (
+                <fieldset className="upload-control__image-group">
+                  <legend className="label">IMAGE B</legend>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,.tif,.tiff"
+                    onChange={(e) => setFile2(e.target.files?.[0] ?? null)}
+                  />
+                  <div className="upload-control__row">
+                    <select value={modality2} onChange={(e) => setModality2(e.target.value)}>
+                      <option value="sar">sar</option>
+                      <option value="optical">optical</option>
+                    </select>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="GSD (m)"
+                      value={gsd2}
+                      onChange={(e) => setGsd2(e.target.value)}
+                    />
+                  </div>
+                  {pairKind === "change" && (
+                    <div className="upload-control__row">
+                      <input
+                        type="text"
+                        placeholder="Date (optional, e.g. 2023-11)"
+                        value={afterDate}
+                        onChange={(e) => setAfterDate(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </fieldset>
+              )}
 
-            <button
-              type="submit"
-              className="upload-control__submit"
-              disabled={submitting || !file || (mode === "pair" && !file2)}
-            >
-              {submitting ? "UPLOADING…" : "UPLOAD"}
-            </button>
-          </form>
-        </div>
-      )}
+              {error && <p className="upload-control__error">{error}</p>}
+
+              <button
+                type="submit"
+                className="upload-control__submit"
+                disabled={submitting || !file || (mode === "pair" && !file2)}
+              >
+                {submitting ? "UPLOADING…" : "UPLOAD"}
+              </button>
+            </form>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

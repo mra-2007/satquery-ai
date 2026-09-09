@@ -4,7 +4,8 @@ import { ApiError, getScenes, getSceneChangeSummary, getSceneLegend, postQuery }
 import type { ChangeSummary, LegendEntry, QueryResponse, SceneSummary, UploadResponse } from "./api/types";
 import AnswerPanel from "./components/AnswerPanel";
 import ChangeView from "./components/ChangeView";
-import CommandBar, { ANALYZE_EXAMPLES, CHANGE_EXAMPLES } from "./components/CommandBar";
+import CommandBar, { ANALYZE_EXAMPLES, CHANGE_EXAMPLES, CROSS_MODAL_EXAMPLES } from "./components/CommandBar";
+import CrossModalView from "./components/CrossModalView";
 import GainLossTable from "./components/GainLossTable";
 import Legend from "./components/Legend";
 import MapView from "./components/MapView";
@@ -12,18 +13,7 @@ import TopBar from "./components/TopBar";
 import TraceDrawer from "./components/TraceDrawer";
 import VerificationPanel from "./components/VerificationPanel";
 import WarningBanner from "./components/WarningBanner";
-
-// Preferred default demo scene. Six patches with real Urban fabric AND
-// water were added to data/demo_patches/ after the original 9 (none of
-// which had both at once), and this is the one patch, of all 15, whose
-// PREDICTED mask (the real pipeline, not ground truth) answers all four
-// example questions non-zero/true: 14 water bodies, 90.82 ha forest,
-// built-up-near-water = yes, and a capability-guardrail-degraded building
-// answer (0.42 ha, real Urban fabric present but too small at 10 m GSD to
-// count -- the "exact answer withheld" state, the product's signature
-// moment). See scripts/_diag_15patches.py's run (not kept in the repo) for
-// the full per-patch comparison table.
-const PREFERRED_DEFAULT_SCENE_ID = "S2B_MSIL2A_20180511T100029_N9999_R122_T34VDM_81_44";
+import { PREFERRED_DEFAULT_SCENE_ID } from "./utils/scene";
 
 export default function App() {
   const [scenes, setScenes] = useState<SceneSummary[]>([]);
@@ -63,6 +53,7 @@ export default function App() {
 
   const selectedScene = scenes.find((s) => s.id === selectedSceneId) ?? null;
   const isChangeScene = selectedScene?.kind === "change";
+  const isCrossModalScene = selectedScene?.kind === "cross_modal";
 
   useEffect(() => {
     if (!selectedSceneId) return;
@@ -81,6 +72,13 @@ export default function App() {
         .then(setChangeSummary)
         .catch((err) => setChangeSummaryError(err instanceof Error ? err.message : String(err)))
         .finally(() => setChangeSummaryLoading(false));
+    } else if (isCrossModalScene) {
+      // CrossModalView owns this visual slot itself (its own findings
+      // panel, fetched from GET /scenes/{id}/cross-modal) -- neither the
+      // single-mask Legend nor the bi-temporal GainLossTable applies here.
+      setLegend([]);
+      setChangeSummary(null);
+      setChangeSummaryError(null);
     } else {
       setChangeSummary(null);
       setChangeSummaryError(null);
@@ -89,7 +87,7 @@ export default function App() {
         .catch(() => setLegend([]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSceneId, isChangeScene]);
+  }, [selectedSceneId, isChangeScene, isCrossModalScene]);
 
   async function handleQuery(query: string) {
     if (!selectedSceneId) return;
@@ -123,64 +121,73 @@ export default function App() {
 
       <WarningBanner warnings={selectedScene?.warnings ?? []} />
 
-      {selectedScene ? (
-        isChangeScene ? (
-          <ChangeView
-            sceneId={selectedScene.id}
-            width={selectedScene.width}
-            height={selectedScene.height}
-            gsdMetres={selectedScene.gsd_metres}
-            beforeDate={selectedScene.before_date}
-            afterDate={selectedScene.after_date}
-          />
+      <main className="app-main">
+        {selectedScene ? (
+          isChangeScene ? (
+            <ChangeView
+              sceneId={selectedScene.id}
+              width={selectedScene.width}
+              height={selectedScene.height}
+              gsdMetres={selectedScene.gsd_metres}
+              beforeDate={selectedScene.before_date}
+              afterDate={selectedScene.after_date}
+            />
+          ) : isCrossModalScene ? (
+            <CrossModalView
+              sceneId={selectedScene.id}
+              width={selectedScene.width}
+              height={selectedScene.height}
+              gsdMetres={selectedScene.gsd_metres}
+            />
+          ) : (
+            <MapView
+              sceneId={selectedScene.id}
+              width={selectedScene.width}
+              height={selectedScene.height}
+              gsdMetres={selectedScene.gsd_metres}
+              maskOpacity={maskOpacity}
+            />
+          )
         ) : (
-          <MapView
-            sceneId={selectedScene.id}
-            width={selectedScene.width}
-            height={selectedScene.height}
-            gsdMetres={selectedScene.gsd_metres}
-            maskOpacity={maskOpacity}
-          />
-        )
-      ) : (
-        <div className="app-shell__loading">
-          {scenesError ? `Could not reach the backend: ${scenesError}` : "Loading scenes…"}
-        </div>
-      )}
+          <div className="app-shell__loading">
+            {scenesError ? `Could not reach the backend: ${scenesError}` : "Loading scenes…"}
+          </div>
+        )}
 
-      {isChangeScene ? (
-        <GainLossTable summary={changeSummary} loading={changeSummaryLoading} error={changeSummaryError} />
-      ) : (
-        <Legend entries={legend} />
-      )}
+        {isChangeScene ? (
+          <GainLossTable summary={changeSummary} loading={changeSummaryLoading} error={changeSummaryError} />
+        ) : isCrossModalScene ? null : (
+          <Legend entries={legend} />
+        )}
 
-      <AnswerPanel
-        response={queryResponse}
-        loading={queryLoading}
-        error={queryError}
-        traceOpen={traceOpen}
-        onToggleTrace={() => setTraceOpen((open) => !open)}
-        verificationOpen={verificationOpen}
-        onToggleVerification={() => setVerificationOpen((open) => !open)}
-      />
+        <AnswerPanel
+          response={queryResponse}
+          loading={queryLoading}
+          error={queryError}
+          traceOpen={traceOpen}
+          onToggleTrace={() => setTraceOpen((open) => !open)}
+          verificationOpen={verificationOpen}
+          onToggleVerification={() => setVerificationOpen((open) => !open)}
+        />
 
-      <TraceDrawer
-        trace={queryResponse ? queryResponse.evidence.execution_trace : null}
-        open={traceOpen && queryResponse != null}
-        onClose={() => setTraceOpen(false)}
-      />
+        <TraceDrawer
+          trace={queryResponse ? queryResponse.evidence.execution_trace : null}
+          open={traceOpen && queryResponse != null}
+          onClose={() => setTraceOpen(false)}
+        />
 
-      <VerificationPanel
-        trace={queryResponse ? queryResponse.evidence.execution_trace : null}
-        open={verificationOpen && queryResponse != null}
-        onClose={() => setVerificationOpen(false)}
-      />
+        <VerificationPanel
+          trace={queryResponse ? queryResponse.evidence.execution_trace : null}
+          open={verificationOpen && queryResponse != null}
+          onClose={() => setVerificationOpen(false)}
+        />
 
-      <CommandBar
-        onSubmit={handleQuery}
-        loading={queryLoading}
-        examples={isChangeScene ? CHANGE_EXAMPLES : ANALYZE_EXAMPLES}
-      />
+        <CommandBar
+          onSubmit={handleQuery}
+          loading={queryLoading}
+          examples={isChangeScene ? CHANGE_EXAMPLES : isCrossModalScene ? CROSS_MODAL_EXAMPLES : ANALYZE_EXAMPLES}
+        />
+      </main>
     </div>
   );
 }

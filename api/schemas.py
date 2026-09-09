@@ -50,6 +50,32 @@ class ChangeSummary(BaseModel):
     classes: list[ClassAreaChange]
 
 
+class CrossModalFindingOut(BaseModel):
+    """One class's per-sensor attribution, straight from
+    tools/cross_modal.py's CrossModalFinding -- nothing computed here."""
+
+    class_id: int
+    class_name: str
+    optical_area_ha: float
+    sar_area_ha: float
+    fused_area_ha: float
+    detected_by: list[str]
+    attribution: str
+
+
+class CrossModalSummary(BaseModel):
+    """The full OPTICAL/SAR/FUSED comparison for a 'cross_modal'-kind
+    scene, for the CROSS-MODAL COMPARISON view -- independent of /query, so
+    its three toggles and findings table are always populated regardless of
+    which (if any) question was asked."""
+
+    summary: str
+    cloud_simulated: bool
+    cloud_fraction: float | None
+    sensor_status: dict[str, str]
+    findings: list[CrossModalFindingOut]
+
+
 class QueryRequest(BaseModel):
     scene_id: str
     query: str

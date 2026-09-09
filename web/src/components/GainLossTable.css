@@ -1,8 +1,8 @@
 .gain-loss-table {
   position: absolute;
   left: var(--space-4);
-  top: 100px; /* clears the top bar (56px) plus room for a possible warning banner (34px) */
-  z-index: 6;
+  top: var(--space-4);
+  z-index: var(--z-panel);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -12,7 +12,9 @@
   border-radius: var(--radius-md);
   backdrop-filter: blur(8px);
   width: 340px;
-  max-height: calc(100vh - 100px - var(--space-5));
+  /* Content-sized, not stretched -- but capped so it can never grow down
+     into the command bar's reserved footprint at the bottom of the map area. */
+  max-height: calc(100% - var(--space-4) - var(--panel-bottom-clearance));
   overflow-y: auto;
   animation: stagger-in var(--duration-base) var(--ease-out);
 }

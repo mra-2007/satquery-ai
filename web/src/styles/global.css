@@ -7,7 +7,7 @@
 html,
 body,
 #root {
-  height: 100%;
+  min-height: 100%;
   margin: 0;
   padding: 0;
 }
@@ -19,7 +19,11 @@ body {
   font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
-  overflow: hidden; /* the instrument fills the viewport; nothing scrolls at the page level */
+  /* No page-level overflow rule here -- it's route-specific. The ANALYZE
+     screen (.app-shell below) is a fixed-viewport instrument that must
+     never scroll at the page level; the landing page is a deliberately
+     scrolling single page. Fixing that at body would break one or the
+     other, so each route's own root element owns its own overflow. */
 }
 
 ::selection {
@@ -125,11 +129,36 @@ input {
   }
 }
 
+/* The whole instrument is a flex COLUMN: TopBar and WarningBanner are
+   normal-flow rows with an intrinsic height; .app-main claims exactly
+   whatever's left (flex: 1) and is the ONLY place the map, its overlay
+   panels, and the command bar live. This is deliberate: every overlap bug
+   this layout used to have came from positioning panels against the whole
+   viewport with hand-maintained "top: 100px" magic numbers (top bar +
+   warning banner's combined height, guessed and duplicated across half a
+   dozen CSS files) instead of against the actual map area. Positioning
+   them against .app-main instead makes "the map area" a real, sized box
+   that adjusts itself -- there is no longer a magic number to get wrong or
+   forget to update. */
 .app-shell {
-  position: relative;
   width: 100vw;
   height: 100vh;
+  overflow: hidden; /* the instrument fills the viewport; nothing scrolls at the page level */
   background: var(--surface-0);
+  display: flex;
+  flex-direction: column;
+}
+
+/* The map area: base layer for the map itself (MapView/ChangeView/
+   CrossModalView, z-index: var(--z-map)), and the positioning root for
+   every overlay panel docked inside it. min-height: 0 is required for a
+   flex child to actually shrink to its allotted space rather than
+   overflowing based on its content's natural size. */
+.app-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .app-shell__loading {

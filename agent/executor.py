@@ -93,6 +93,7 @@ def _summarize(output: Any) -> Any:
             "cloud_simulated": output.cloud_simulated,
             "cloud_fraction": output.cloud_fraction,
             "summary": output.summary,
+            "sensor_status": output.sensor_status,
             "findings": [
                 {"class_id": f.class_id, "class_name": f.class_name,
                  "optical_area_ha": f.optical_area_ha, "sar_area_ha": f.sar_area_ha,

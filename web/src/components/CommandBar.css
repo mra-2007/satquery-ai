@@ -1,10 +1,14 @@
+/* Pinned to the bottom of the map area, but its usable band stops short of
+   AnswerPanel's reserved right-hand width (380px + its own gaps) --
+   centering the 640px form/chips WITHIN that band, rather than across the
+   full map-area width, is what guarantees this never overlaps the answer
+   panel (see AnswerPanel.css) regardless of viewport width. */
 .command-bar {
   position: absolute;
-  left: 50%;
-  bottom: var(--space-6);
-  transform: translateX(-50%);
-  z-index: 10;
-  width: 640px;
+  left: var(--space-4);
+  right: calc(380px + var(--space-5) + var(--space-4));
+  bottom: var(--space-4);
+  z-index: var(--z-command-bar);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -12,7 +16,7 @@
 }
 
 .command-bar__form {
-  width: 100%;
+  width: min(640px, 100%);
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -70,6 +74,7 @@
 }
 
 .command-bar__chips {
+  width: min(640px, 100%);
   display: flex;
   flex-wrap: wrap;
   justify-content: center;

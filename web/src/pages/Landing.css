@@ -1,0 +1,526 @@
+.landing {
+  background: var(--surface-0);
+  color: var(--text-0);
+}
+
+.section {
+  padding: 120px clamp(24px, 6vw, 96px);
+}
+
+.section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 780px;
+  margin: 0 auto 64px;
+  text-align: center;
+}
+.section-heading__eyebrow {
+  color: var(--signal-active);
+  letter-spacing: 0.22em;
+}
+.section-heading__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(28px, 3vw, 40px);
+  color: var(--text-0);
+  letter-spacing: -0.01em;
+}
+.section-heading__subtitle {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-1);
+}
+
+/* ============================================================ 1. HERO === */
+
+.hero {
+  position: relative;
+  height: 100vh;
+  min-height: 720px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--surface-0);
+}
+
+.hero__visual {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.hero__visual-drift {
+  position: absolute;
+  inset: -6%;
+  animation: hero-drift 40s ease-in-out infinite alternate;
+}
+@keyframes hero-drift {
+  0% {
+    transform: scale(1) translate(0, 0);
+  }
+  100% {
+    transform: scale(1.14) translate(-2.5%, -1.5%);
+  }
+}
+
+.hero__image,
+.hero__mask {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.hero__image {
+  filter: saturate(1.05) contrast(1.08) brightness(0.78);
+}
+.hero__mask {
+  opacity: 0;
+  animation: hero-mask-cycle 9s ease-in-out infinite;
+}
+@keyframes hero-mask-cycle {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.hero__scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(10, 12, 14, 0.25) 0%, rgba(10, 12, 14, 0.78) 78%),
+    linear-gradient(180deg, rgba(10, 12, 14, 0.6) 0%, rgba(10, 12, 14, 0.25) 35%, rgba(10, 12, 14, 0.92) 100%);
+}
+
+.hero__content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-6);
+  max-width: 860px;
+}
+
+.hero__eyebrow {
+  color: var(--signal-active);
+  letter-spacing: 0.3em;
+}
+
+.hero__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(52px, 8vw, 108px);
+  letter-spacing: -0.01em;
+  color: var(--text-0);
+}
+
+.hero__tagline {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: clamp(16px, 1.6vw, 22px);
+  color: var(--text-1);
+  max-width: 620px;
+}
+
+.hero__cta {
+  margin-top: var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 17px 44px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--surface-0);
+  background: var(--text-0);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  box-shadow: var(--shadow-raised);
+  transition: transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+.hero__cta:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lifted);
+}
+
+/* ======================================================= 2. THE PROBLEM === */
+
+.problem {
+  background: var(--surface-1);
+}
+
+.problem__grid {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+}
+
+.problem-card {
+  padding: var(--space-6) var(--space-5);
+  background: var(--surface-2);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+}
+
+.problem-card__title {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  color: var(--text-0);
+}
+
+.problem-card__body {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-1);
+}
+
+/* ====================================================== 3. HOW IT WORKS === */
+
+.how-it-works {
+  background: var(--surface-0);
+}
+
+.flow {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.flow__track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+}
+.flow__track::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 7px;
+  height: 1px;
+  background: var(--border-hairline-strong);
+}
+
+.flow__pulse {
+  position: absolute;
+  top: 3px;
+  left: 12px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--signal-active);
+  box-shadow: 0 0 12px 2px var(--signal-active);
+  opacity: 0;
+  animation: flow-pulse-travel 6s linear infinite;
+}
+@keyframes flow-pulse-travel {
+  0% {
+    left: 12px;
+    opacity: 0;
+  }
+  4% {
+    opacity: 1;
+  }
+  96% {
+    opacity: 1;
+  }
+  100% {
+    left: calc(100% - 21px);
+    opacity: 0;
+  }
+}
+
+/* Each node's inline `animationDelay` (set in Landing.tsx, evenly spaced
+   across the pulse's 6s travel time) is inherited by BOTH children below
+   via `animation-delay: inherit` -- so the dot and label always flash in
+   sync with each other, and with the moment the traveling pulse actually
+   passes this node's position on the track. */
+.flow__node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  width: 160px;
+}
+
+.flow__node-dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border-hairline-strong);
+  animation: flow-dot-light 6s linear infinite;
+  animation-delay: inherit;
+}
+.flow__node-label {
+  animation: flow-label-light 6s linear infinite;
+  animation-delay: inherit;
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: var(--text-2);
+  text-align: center;
+}
+
+@keyframes flow-dot-light {
+  0%,
+  8%,
+  100% {
+    background: var(--surface-2);
+    border-color: var(--border-hairline-strong);
+    box-shadow: none;
+  }
+  3% {
+    background: var(--signal-active);
+    border-color: var(--signal-active);
+    box-shadow: 0 0 0 5px var(--signal-active-dim), 0 0 16px rgba(77, 209, 224, 0.5);
+  }
+}
+@keyframes flow-label-light {
+  0%,
+  8%,
+  100% {
+    color: var(--text-2);
+  }
+  3% {
+    color: var(--text-0);
+  }
+}
+
+/* ============================================================ 4. RESULTS === */
+
+.results {
+  background: var(--surface-1);
+}
+
+.results__primary {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: clamp(32px, 6vw, 96px);
+  flex-wrap: wrap;
+}
+
+.results__stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+/* The single largest element on the page -- the reasoning layer's own
+   ceiling, deliberately overwhelming everything around it. */
+.results__stat--huge .tabular {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(120px, 15vw, 240px);
+  line-height: 0.95;
+  color: var(--signal-verified);
+}
+.results__stat--large .tabular {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(64px, 8vw, 108px);
+  line-height: 0.95;
+  color: var(--text-0);
+}
+
+.results__stat-label {
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  max-width: 220px;
+}
+
+.results__gap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 280px;
+}
+.results__gap-note {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-1);
+}
+
+.results__secondary {
+  max-width: 640px;
+  margin: 56px auto 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  text-align: center;
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-hairline);
+}
+.results__stat--small {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 30px;
+  color: var(--text-0);
+  flex-shrink: 0;
+}
+.results__secondary-label {
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+  max-width: 440px;
+  text-align: left;
+}
+
+/* ====================================================== 5. COUNTER STRIP === */
+
+.counter-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(24px, 4vw, 64px);
+  padding: 56px clamp(24px, 6vw, 96px);
+  background: var(--surface-0);
+  border-top: 1px solid var(--border-hairline);
+  border-bottom: 1px solid var(--border-hairline);
+  flex-wrap: wrap;
+}
+
+.counter-strip__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.counter-strip__number {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 34px;
+  color: var(--text-0);
+}
+
+.counter-strip__label {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  text-align: center;
+}
+
+.counter-strip__divider {
+  width: 1px;
+  height: 40px;
+  background: var(--border-hairline-strong);
+}
+
+/* ====================================================== 6. CAPABILITIES === */
+
+.capabilities {
+  background: var(--surface-0);
+}
+
+.capabilities__grid {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+}
+
+.capability-card {
+  padding: var(--space-6) var(--space-5);
+  background: var(--surface-1);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  transition: transform var(--duration-base) var(--ease-out), box-shadow var(--duration-base) var(--ease-out),
+    border-color var(--duration-base) var(--ease-out);
+}
+.capability-card:hover {
+  transform: translateY(-6px);
+  box-shadow: var(--shadow-lifted);
+  border-color: var(--border-hairline-strong);
+}
+
+.capability-card__title {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--text-0);
+}
+
+.capability-card__body {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-1);
+}
+
+/* ============================================================ 7. FOOTER === */
+
+.landing-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-hairline);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.landing-footer__dot {
+  color: var(--text-2);
+  opacity: 0.6;
+}
+
+/* ============================================================ Motion ==== */
+
+@media (prefers-reduced-motion: reduce) {
+  .hero__visual-drift,
+  .hero__mask,
+  .flow__pulse,
+  .flow__node-dot,
+  .flow__node-label {
+    animation: none !important;
+  }
+  .hero__mask {
+    opacity: 0.3;
+  }
+}

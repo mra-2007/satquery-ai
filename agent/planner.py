@@ -41,7 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agent.dsl import Plan, validate
 from agent.registry import REGISTRY
-from agent.tasks import _CHANGE_WORDS, _DESCRIBE_WORDS
+from agent.tasks import _CHANGE_WORDS, _CROSS_MODAL_WORDS, _DESCRIBE_WORDS
 from agent.vocabulary import resolve_noun
 
 AGENT_DIR = Path(__file__).resolve().parent
@@ -302,6 +302,15 @@ def _resolve_class(phrase: str, scene: SceneDescriptor) -> int | list[int]:
 
 def _keyword_fallback(query: str, scene: SceneDescriptor) -> Plan:
     q = query.strip().rstrip("?").strip().lower()
+
+    # The 'cross_modal' tool (tools/cross_modal.py) likewise takes no
+    # required parameters -- it always segments whatever raw stack the
+    # executor was given, three ways. _CROSS_MODAL_WORDS is agent.tasks's
+    # own list (shared, not duplicated), checked first so this and
+    # classify_task's own fallback can never disagree about what counts as
+    # a cross-modal question.
+    if any(word in q for word in _CROSS_MODAL_WORDS):
+        return _fallback_plan("cross_modal", {})
 
     # The 'change' tool (evidence/change.py) takes no parameters at all --
     # it always operates on whatever before/after rasters the executor was

@@ -247,6 +247,21 @@ def test_cloud_simulation_flag_is_recorded():
     assert "simulated cloud cover" in result.summary
 
 
+# --- sensor_status: per-toggle USABLE/INSUFFICIENT verdict --------------------
+
+
+def test_sensor_status_is_all_usable_without_cloud_simulation(seven_pattern_result):
+    assert seven_pattern_result.sensor_status == {"optical": "USABLE", "sar": "USABLE", "fused": "USABLE"}
+
+
+def test_sensor_status_marks_optical_insufficient_under_cloud_simulation():
+    session = _FakeSession([0] * 12)
+    result = cross_modal_analysis(
+        _seven_pattern_stack(), GSD_10M, cloud_simulation=True, session=session, config=_uniform_config(),
+    )
+    assert result.sensor_status == {"optical": "INSUFFICIENT", "sar": "USABLE", "fused": "USABLE"}
+
+
 # --- integration: real model, real genuine-SAR patch -------------------------
 
 _demo_patches = sorted(DEMO_PATCHES_DIR.glob("*.npz")) if DEMO_PATCHES_DIR.exists() else []

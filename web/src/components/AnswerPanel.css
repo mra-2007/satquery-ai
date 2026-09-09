@@ -1,10 +1,10 @@
 .answer-panel {
   position: absolute;
-  top: 100px; /* clears the top bar (56px) plus room for a possible warning banner (34px) */
+  top: var(--space-4);
   right: var(--space-5);
-  z-index: 10;
+  bottom: var(--panel-bottom-clearance); /* stops short of the command bar -- never overlaps it */
+  z-index: var(--z-panel);
   width: 380px;
-  max-height: calc(100vh - 100px - var(--space-5));
   overflow-y: auto;
   display: flex;
   flex-direction: column;

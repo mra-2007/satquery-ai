@@ -1,0 +1,306 @@
+.cross-modal-view {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-map);
+  background: var(--surface-0);
+}
+
+.cross-modal-view__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.cross-modal-view__canvas .ol-viewport {
+  background: var(--surface-0);
+}
+
+.cross-modal-view .ol-scale-line {
+  position: absolute;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  background: transparent;
+  padding: 0;
+  z-index: 6;
+}
+.cross-modal-view .ol-scale-line-inner {
+  border: 1px solid var(--text-2);
+  border-top: none;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px 1px;
+  white-space: nowrap;
+}
+
+/* --- Side badges, matching ChangeView's BEFORE/AFTER convention: left =
+   the always-full base layer, right = whatever the divider currently
+   clips in from the toggled sensor's mask ------------------------------- */
+
+.cross-modal-view__side-badge {
+  position: absolute;
+  top: var(--space-4);
+  z-index: 3;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 6px 12px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+.cross-modal-view__side-badge--base {
+  left: 380px;
+}
+.cross-modal-view__side-badge--mask {
+  right: 420px;
+}
+
+/* --- Draggable swipe divider, identical mechanism to ChangeView.tsx ---- */
+
+.cross-modal-view__divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 8;
+  width: 32px;
+  margin-left: -16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.cross-modal-view__divider-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--text-0);
+  box-shadow: 0 0 0 1px var(--border-hairline-strong);
+}
+
+.cross-modal-view__divider-handle {
+  position: relative;
+  z-index: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border-hairline-strong);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-0);
+  font-size: 13px;
+  transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.cross-modal-view__divider:hover .cross-modal-view__divider-handle,
+.cross-modal-view__divider--dragging .cross-modal-view__divider-handle {
+  background: var(--surface-3);
+  transform: scale(1.08);
+}
+
+/* --- Bottom-right control cluster: sensor toggle + cloud-sim checkbox -- */
+
+.cross-modal-view__controls {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: var(--z-panel);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 6px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(6px);
+}
+
+.cross-modal-view__sensor-toggle {
+  display: flex;
+  gap: 2px;
+}
+.cross-modal-view__sensor-toggle button {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.cross-modal-view__sensor-toggle button:hover {
+  color: var(--text-0);
+}
+.cross-modal-view__sensor-toggle button.is-active {
+  background: var(--surface-3);
+  border-color: var(--border-hairline-strong);
+  color: var(--signal-active);
+}
+
+.cross-modal-view__sensor-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.cross-modal-view__sensor-dot--usable {
+  background: var(--signal-verified);
+}
+.cross-modal-view__sensor-dot--insufficient {
+  background: var(--signal-error);
+}
+
+.cross-modal-view__cloud-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border-left: 1px solid var(--border-hairline);
+  cursor: pointer;
+}
+.cross-modal-view__cloud-toggle input {
+  accent-color: var(--signal-active);
+  cursor: pointer;
+}
+
+/* --- Findings panel: same slot/shape as GainLossTable/Legend (left,
+   top: 100px), since cross_modal scenes never show either of those ------ */
+
+.cross-modal-findings {
+  position: absolute;
+  left: var(--space-4);
+  top: var(--space-4);
+  z-index: var(--z-panel);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(8px);
+  width: 340px;
+  max-height: calc(100% - var(--space-4) - var(--panel-bottom-clearance));
+  overflow-y: auto;
+  animation: stagger-in var(--duration-base) var(--ease-out);
+}
+
+.cross-modal-findings__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.cross-modal-findings__count {
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+.cross-modal-findings__status {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-1);
+  line-height: 1.5;
+}
+.cross-modal-findings__status--error {
+  color: var(--signal-error);
+}
+
+.cross-modal-findings__status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.cross-modal-findings__status-chip {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+.cross-modal-findings__status-chip--usable {
+  color: var(--signal-verified);
+  background: var(--signal-verified-dim);
+}
+.cross-modal-findings__status-chip--insufficient {
+  color: var(--signal-error);
+  background: rgba(217, 106, 95, 0.14);
+}
+
+.cross-modal-findings__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cross-modal-findings__row {
+  display: grid;
+  grid-template-columns: 1.6fr 0.6fr 0.6fr 0.6fr;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px 0;
+}
+.cross-modal-findings__row:not(:last-child):not(.cross-modal-findings__row--head) {
+  border-bottom: 1px solid var(--border-hairline);
+}
+.cross-modal-findings__row--head {
+  padding-bottom: var(--space-2);
+}
+
+.cross-modal-findings__num-head {
+  text-align: right;
+}
+
+.cross-modal-findings__name {
+  font-size: 12px;
+  color: var(--text-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cross-modal-findings__num {
+  font-size: 12px;
+  text-align: right;
+  color: var(--text-2);
+}
+/* A sensor that actually contributed this class's detection is
+   highlighted in the active-layer cyan -- the same "this is live data"
+   signal MapView/TopBar already use, so a glance at the row shows exactly
+   which sensor(s) are responsible, per this feature's own point. */
+.cross-modal-findings__num--hit {
+  color: var(--signal-active);
+  font-weight: 500;
+}
+
+.cross-modal-findings__summary {
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-hairline);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-1);
+}

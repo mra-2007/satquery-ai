@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import type { SceneSummary, UploadResponse } from "../api/types";
 import { parseAcquisitionDate, parsePlatform } from "../utils/scene";
 import UploadControl from "./UploadControl";
@@ -26,7 +28,9 @@ export default function TopBar({
   return (
     <header className="top-bar">
       <div className="top-bar__section">
-        <span className="top-bar__wordmark">SATQUERY</span>
+        <Link to="/" className="top-bar__logo-link" title="Back to home">
+          <span className="top-bar__wordmark">SATQUERY</span>
+        </Link>
         <div className="top-bar__divider" />
         <label className="top-bar__field">
           <span className="label">SCENE</span>
@@ -53,7 +57,7 @@ export default function TopBar({
         <TelemetryField label="PLATFORM" value={platform ?? (selectedScene?.source === "upload" ? "UPLOAD" : "—")} />
         <TelemetryField label="ACQUIRED" value={date ?? "—"} />
 
-        {selectedScene?.kind !== "change" && (
+        {selectedScene?.kind !== "change" && selectedScene?.kind !== "cross_modal" && (
           <>
             <div className="top-bar__divider" />
             <label className="top-bar__field top-bar__field--slider">

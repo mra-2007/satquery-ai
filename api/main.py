@@ -45,6 +45,18 @@ GET  /scenes/{id}/mask   -- the scene's predicted class mask, colorized,
 GET  /scenes/{id}/legend -- {class_id, class_name, color} for every class
                  actually present in that scene's mask (not all 19).
 
+GET  /scenes/{id}/cross-modal      -- the full tools/cross_modal.py
+                 comparison (per-class optical/SAR/fused attribution, plus
+                 a USABLE/INSUFFICIENT verdict per sensor) for a
+                 'cross_modal'-kind scene, computed on request from its raw
+                 stack. `cloud_simulation`/`cloud_fraction` query params
+                 replay the same demo-mode degradation tools/cross_modal.py
+                 exposes.
+GET  /scenes/{id}/cross-modal-mask -- one sensor's (`sensor=optical|sar|
+                 fused`) colorized predicted-mask PNG, for the CROSS-MODAL
+                 COMPARISON view's swipe divider. Same cloud_simulation
+                 params as above.
+
 Per CLAUDE.md: SQLite (not PostgreSQL) for scene/query metadata, plain
 .npy files on disk for masks/stacks, no Celery -- inference runs
 synchronously, in-request for an upload, and once per demo patch at
@@ -77,10 +89,20 @@ from agent.planner import PlannerError, SceneDescriptor, plan_from_query
 from agent.tasks import classify_task
 from api.database import get_connection
 from api.rendering import build_answer, build_confidence, build_geometry
-from api.schemas import ChangeSummary, ClassAreaChange, QueryRequest, QueryResponse, SceneSummary, UploadResponse
+from api.schemas import (
+    ChangeSummary,
+    ClassAreaChange,
+    CrossModalFindingOut,
+    CrossModalSummary,
+    QueryRequest,
+    QueryResponse,
+    SceneSummary,
+    UploadResponse,
+)
 from api.scenes import (
     class_color,
     ensure_demo_change_scene_loaded,
+    ensure_demo_cross_modal_scene_loaded,
     ensure_scenes_loaded,
     load_scene_before_stack_for_row,
     load_scene_mask,
@@ -97,6 +119,7 @@ from evidence.schema import Evidence
 from perception import infer
 from raster_io.readers import RasterImage, ReaderError, read_image
 from raster_io.validate import ImageInput, validate_images
+from tools import cross_modal as cross_modal_tool
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 UPLOADS_DIR = ROOT_DIR / "data" / "api" / "uploads"
@@ -106,6 +129,7 @@ UPLOADS_DIR = ROOT_DIR / "data" / "api" / "uploads"
 async def lifespan(app: FastAPI):
     ensure_scenes_loaded()
     ensure_demo_change_scene_loaded()
+    ensure_demo_cross_modal_scene_loaded()
     yield
 
 
@@ -321,17 +345,28 @@ def list_scenes() -> list[SceneSummary]:
 
 
 @app.get("/scenes/{scene_id}/image")
-def scene_image(scene_id: str, when: Literal["before", "after"] = "after") -> Response:
+def scene_image(
+    scene_id: str,
+    when: Literal["before", "after"] = "after",
+    cloud_simulation: bool = False,
+    cloud_fraction: float = cross_modal_tool.DEFAULT_CLOUD_FRACTION,
+) -> Response:
     """The scene's true-color preview PNG, rendered on request from its
     real bands (see api/scenes.py's render_preview_png). For an uploaded
     scene this is rendered from the exact (possibly channel-gapped) stack
     the model actually saw -- what you see is what it saw. `when="before"`
     is only meaningful for a 'change'-kind scene (the CHANGE COMPARISON
-    view's other side); every other scene has only one date and 404s for it."""
+    view's other side); every other scene has only one date and 404s for it.
+    `cloud_simulation=true` renders the same simulated-cloud-cover stack
+    (tools/cross_modal.py's simulate_cloud_cover) the CROSS-MODAL COMPARISON
+    view's demo-mode toggle segments -- so the preview visibly shows the
+    zeroed optical rows, not just the resulting mask."""
     row = _get_scene_row(scene_id)
     stack = load_scene_before_stack_for_row(row) if when == "before" else load_scene_stack_for_row(row)
     if stack is None:
         raise HTTPException(status_code=404, detail=f"no {when} stack available for scene {scene_id!r}")
+    if cloud_simulation:
+        stack = cross_modal_tool.simulate_cloud_cover(stack, cloud_fraction)
     return Response(content=render_preview_png(stack), media_type="image/png")
 
 
@@ -418,6 +453,75 @@ def scene_legend(scene_id: str) -> list[dict]:
         }
         for i in order
     ]
+
+
+def _get_cross_modal_stack(scene_id: str) -> tuple[Any, dict]:
+    """Shared 404/stack-lookup for both cross-modal endpoints below: the
+    scene must be kind='cross_modal' and have a raw 16-channel stack to
+    segment (tools/cross_modal.py needs the full model input, not a
+    pre-computed mask -- see agent/executor.py's own cross_modal wiring)."""
+    row = _get_scene_row(scene_id)
+    if row["kind"] != "cross_modal":
+        raise HTTPException(status_code=404, detail=f"scene {scene_id!r} is not a cross_modal scene")
+    stack = load_scene_stack_for_row(row)
+    if stack is None:
+        raise HTTPException(status_code=404, detail=f"no stack available for scene {scene_id!r}")
+    return stack, {"gsd_metres": row["gsd_metres"]}
+
+
+@app.get("/scenes/{scene_id}/cross-modal", response_model=CrossModalSummary)
+def scene_cross_modal(
+    scene_id: str,
+    cloud_simulation: bool = False,
+    cloud_fraction: float = cross_modal_tool.DEFAULT_CLOUD_FRACTION,
+) -> CrossModalSummary:
+    """tools/cross_modal.py's full comparison -- every real area number
+    (evidence/ops.py's size(), over each of the three real predicted masks)
+    plus the per-sensor USABLE/INSUFFICIENT verdict -- for the CROSS-MODAL
+    COMPARISON view's findings table. 404 for any scene that isn't a
+    'cross_modal' pair."""
+    stack, metadata = _get_cross_modal_stack(scene_id)
+    session, config = _get_inference_session()
+    result = cross_modal_tool.cross_modal_analysis(
+        stack, metadata, cloud_simulation=cloud_simulation, cloud_fraction=cloud_fraction,
+        session=session, config=config,
+    )
+    return CrossModalSummary(
+        summary=result.summary,
+        cloud_simulated=result.cloud_simulated,
+        cloud_fraction=result.cloud_fraction,
+        sensor_status=result.sensor_status,
+        findings=[
+            CrossModalFindingOut(
+                class_id=f.class_id, class_name=f.class_name,
+                optical_area_ha=f.optical_area_ha, sar_area_ha=f.sar_area_ha, fused_area_ha=f.fused_area_ha,
+                detected_by=list(f.detected_by), attribution=f.attribution,
+            )
+            for f in result.findings
+        ],
+    )
+
+
+@app.get("/scenes/{scene_id}/cross-modal-mask")
+def scene_cross_modal_mask(
+    scene_id: str,
+    sensor: Literal["optical", "sar", "fused"] = "fused",
+    cloud_simulation: bool = False,
+    cloud_fraction: float = cross_modal_tool.DEFAULT_CLOUD_FRACTION,
+) -> Response:
+    """The colorized predicted-mask PNG for one sensor path (optical-only,
+    SAR-only, or fused) over this scene's raw stack -- the CROSS-MODAL
+    COMPARISON view's swipe divider clips this against the true-color
+    preview from GET /scenes/{id}/image. `cloud_simulation=true` segments
+    the same simulated-cloud-cover stack that endpoint can also render, so
+    the two stay comparable. 404 for any scene that isn't a 'cross_modal'
+    pair."""
+    stack, _metadata = _get_cross_modal_stack(scene_id)
+    if cloud_simulation:
+        stack = cross_modal_tool.simulate_cloud_cover(stack, cloud_fraction)
+    session, config = _get_inference_session()
+    result = infer.segment_image(stack, sensor, session=session, config=config)
+    return Response(content=render_mask_png(result.mask), media_type="image/png")
 
 
 @app.post("/query", response_model=QueryResponse)

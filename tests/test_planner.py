@@ -137,6 +137,21 @@ def test_fallback_change_query_matches_increase_phrasing_too():
     assert plan[0].parameters == {}
 
 
+def test_fallback_cross_modal_query_maps_to_the_parameterless_cross_modal_tool():
+    # No class-name parsing needed at all -- the cross_modal tool takes no
+    # required parameters, so "SAR"/"radar" need only be recognized, not
+    # resolved to a class_id.
+    plan = planner._keyword_fallback("Does the SAR image confirm what the optical image shows?", TEST_SCENE)
+    assert plan[0].tool == "cross_modal"
+    assert plan[0].parameters == {}
+
+
+def test_fallback_cross_modal_query_matches_radar_phrasing_too():
+    plan = planner._keyword_fallback("Compare the radar and optical imagery for this area.", TEST_SCENE)
+    assert plan[0].tool == "cross_modal"
+    assert plan[0].parameters == {}
+
+
 def test_fallback_describe_query_maps_to_the_parameterless_caption_tool():
     plan = planner._keyword_fallback("Describe this scene.", TEST_SCENE)
     assert plan[0].tool == "caption"

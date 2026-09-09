@@ -134,6 +134,69 @@ def ensure_scenes_loaded() -> None:
         conn.close()
 
 
+def ensure_demo_cross_modal_scene_loaded() -> None:
+    """Seeds exactly one demo 'cross_modal'-kind scene from
+    data/demo_patches/*.npz, so the CROSS-MODAL COMPARISON view (OPTICAL/
+    SAR/FUSED toggles) is demonstrable without first requiring a user to
+    /upload a real optical+SAR pair.
+
+    These patches already carry genuine Sentinel-1 SAR alongside their
+    Sentinel-2 optical bands in one 16-channel stack (see this module's own
+    docstring and tools/cross_modal.py's) -- unlike ensure_demo_change_scene_loaded,
+    which must extract a bi-temporal pair from a separate dataset, this only
+    needs to register a second scene row, of kind='cross_modal' rather than
+    'single', pointing at the same .npz. `mask_path` holds the fused
+    segmentation (sensor_id="fused"), matching every other scene's
+    AFTER/primary-mask convention; the CROSS-MODAL COMPARISON view computes
+    the optical-only and SAR-only masks itself, on request, via
+    GET /scenes/{id}/cross-modal-mask.
+
+    Idempotent, called once from api/main.py's startup lifespan alongside
+    ensure_scenes_loaded() and ensure_demo_change_scene_loaded(): does
+    nothing once a source='demo' kind='cross_modal' scene already exists.
+    Picks the first .npz in sorted order -- deterministic, same convention
+    tests/test_cross_modal.py's own integration tests use (_demo_patches[0]) --
+    not cherry-picked for a flattering result."""
+    if not DEMO_PATCHES_DIR.exists():
+        return
+
+    conn = get_connection()
+    try:
+        existing = conn.execute(
+            "SELECT id FROM scenes WHERE source = 'demo' AND kind = 'cross_modal' LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if existing is not None:
+        return
+
+    patches = sorted(DEMO_PATCHES_DIR.glob("*.npz"))
+    if not patches:
+        return
+    npz_path = patches[0]
+
+    stack = load_scene_stack(npz_path.name)
+    session = infer.load_model()
+    config = infer.load_class_config()
+    result = infer.segment_image(stack, SENSOR, session=session, config=config)
+
+    MASKS_DIR.mkdir(parents=True, exist_ok=True)
+    scene_id = new_scene_id("crossmodal-demo")
+    mask_path = MASKS_DIR / f"{scene_id}.npy"
+    np.save(mask_path, result.mask)
+
+    height, width = result.mask.shape
+    conn = get_connection()
+    try:
+        _insert_scene(
+            conn, scene_id=scene_id, filename=npz_path.name, width=width, height=height,
+            gsd_metres=GSD_METRES, sensor=SENSOR, mask_path=str(mask_path),
+            classes=dict(enumerate(SEGMENTATION_CLASSES)), kind="cross_modal", source="demo",
+        )
+    finally:
+        conn.close()
+
+
 def load_scene_mask(mask_path: str) -> np.ndarray:
     return np.load(mask_path)
 
