@@ -170,3 +170,163 @@
   line-height: 1.55;
   color: var(--text-1);
 }
+
+/* --- Cross-source fusion (evidence/fusion.py) -------------------------- */
+
+.fusion-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-hairline);
+}
+
+.fusion-section__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.fusion-section__verdict {
+  font-size: 11px;
+}
+.fusion-section__verdict--present {
+  color: var(--signal-verified);
+}
+.fusion-section__verdict--absent {
+  color: var(--signal-withheld);
+}
+
+/* The disclosure this whole module exists to carry: why segmentation and
+   classification are weighted lower than spectral/SAR. Deliberately
+   visible (not collapsed), not just logged -- see evidence/fusion.py's
+   WEIGHTING_NOTE. */
+.fusion-section__weighting-note {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border-hairline);
+  border-left: 2px solid var(--signal-active);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-1);
+}
+
+.fusion-section__sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fusion-source {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-hairline);
+  border-left: 2px solid var(--border-hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fusion-source--present {
+  border-left-color: var(--signal-verified);
+}
+.fusion-source--absent {
+  border-left-color: var(--signal-withheld);
+}
+.fusion-source--unavailable {
+  border-left-color: var(--text-disabled);
+  opacity: 0.6;
+}
+
+.fusion-source__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.fusion-source__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-0);
+}
+
+/* Segmentation/classification carry this tag -- the visual echo of
+   WEIGHTING_NOTE's "share one encoder" disclosure, right on the two
+   sources it applies to. */
+.fusion-source__correlated-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--signal-withheld-dim);
+  color: var(--signal-withheld);
+  font-family: var(--font-body);
+  font-size: 9px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.fusion-source__weight {
+  font-size: 10px;
+  color: var(--text-2);
+}
+
+.fusion-source__verdict {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--text-1);
+}
+.fusion-source--present .fusion-source__verdict {
+  color: var(--signal-verified);
+}
+.fusion-source--absent .fusion-source__verdict {
+  color: var(--signal-withheld);
+}
+
+.fusion-source__confidence-track {
+  height: 3px;
+  background: var(--border-hairline-strong);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.fusion-source__confidence-fill {
+  height: 100%;
+  background: var(--text-1);
+  transition: width var(--duration-slow) var(--ease-out);
+}
+.fusion-source--present .fusion-source__confidence-fill {
+  background: var(--signal-verified);
+}
+.fusion-source--absent .fusion-source__confidence-fill {
+  background: var(--signal-withheld);
+}
+
+.fusion-source__detail {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.fusion-section__summary {
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-hairline);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-1);
+}

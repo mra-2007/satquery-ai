@@ -8,6 +8,7 @@ tools/caption.py's tests force it -- this repo has a real key configured
 in .env, and a test suite must never depend on a live network call."""
 
 import io
+import re
 
 import numpy as np
 import pytest
@@ -188,10 +189,61 @@ def test_query_unknown_scene_returns_404(client):
     assert response.status_code == 404
 
 
-def test_query_unresolvable_phrase_returns_422(client):
+def test_query_unresolvable_phrase_gets_a_conversational_reply_not_a_422(client):
+    # Previously a 422 (PlannerError) -- per the CONVERSATIONAL INPUT
+    # feature, an off-topic/unparseable query now gets a scoped reply
+    # instead of an error.
     scene_id = client.get("/scenes").json()[0]["id"]
     response = client.post("/query", json={"scene_id": scene_id, "query": "What is the meaning of life?"})
-    assert response.status_code == 422
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["evidence"]["value"], str)
+    assert "only answer questions about" in body["evidence"]["value"].lower()
+    assert any(step["tool"] == "conversational" for step in body["evidence"]["execution_trace"])
+
+
+# --- METADATA QUESTIONS and CONVERSATIONAL INPUT -----------------------------------
+
+
+def test_query_metadata_resolution_question(client):
+    scene_id = client.get("/scenes").json()[0]["id"]
+    response = client.post("/query", json={"scene_id": scene_id, "query": "What resolution is this?"})
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["evidence"]["value"], str)
+    assert "ground sample distance" in body["evidence"]["value"].lower()
+    step = next(s for s in body["evidence"]["execution_trace"] if s["tool"] == "metadata")
+    assert step["parameters"] == {"aspect": "resolution"}
+    assert step["confidence"] == 1.0
+
+
+def test_query_metadata_classes_question_lists_real_areas(client):
+    scene_id = client.get("/scenes").json()[0]["id"]
+    response = client.post("/query", json={"scene_id": scene_id, "query": "What's in this scene?"})
+    assert response.status_code == 200
+    body = response.json()
+    step = next(s for s in body["evidence"]["execution_trace"] if s["tool"] == "metadata")
+    assert step["output"]["aspect"] == "classes"
+    assert len(step["output"]["detail"]["classes"]) > 0
+
+
+def test_query_metadata_date_question_reads_the_real_demo_patch_filename(client):
+    scene_id = client.get("/scenes").json()[0]["id"]
+    response = client.post("/query", json={"scene_id": scene_id, "query": "When was this taken?"})
+    assert response.status_code == 200
+    step = next(s for s in response.json()["evidence"]["execution_trace"] if s["tool"] == "metadata")
+    assert step["output"]["detail"]["available"] is True
+    assert re.match(r"^\d{4}-\d{2}-\d{2}$", step["output"]["detail"]["acquisition_date"])
+
+
+def test_query_greeting_gets_a_conversational_reply(client):
+    scene_id = client.get("/scenes").json()[0]["id"]
+    response = client.post("/query", json={"scene_id": scene_id, "query": "Hi there!"})
+    assert response.status_code == 200
+    body = response.json()
+    assert "SatQuery AI" in body["evidence"]["value"]
+    step = next(s for s in body["evidence"]["execution_trace"] if s["tool"] == "conversational")
+    assert step["parameters"] == {"kind": "greeting"}
 
 
 def test_adjacency_query_geometry_includes_both_classes(client):

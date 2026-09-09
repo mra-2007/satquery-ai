@@ -58,7 +58,7 @@ def build_geometry(mask: np.ndarray, classes: dict[int, str], final_step: TraceS
     pixels actually produced it."""
     tool, params, output = final_step.tool, final_step.parameters, final_step.output
 
-    if tool in ("count", "size", "presence"):
+    if tool in ("count", "size", "presence", "fusion"):
         class_id = params["class_id"]
         return FeatureCollection(features=_vectorize_class(mask, class_id, _class_label(classes, class_id)))
 
@@ -118,6 +118,14 @@ def build_answer(full_trace: list[TraceStep], classes: dict[int, str]):
         return str(output["class_name"]), None, text, limitation
     if tool in ("cross_modal", "change"):
         return str(output["summary"]), None, str(output["summary"]), limitation
+    if tool == "fusion":
+        return bool(output["fused_present"]), None, str(output["summary"]), limitation
+    if tool in ("metadata", "conversational"):
+        # Both are prose fact-retrieval/canned replies -- the full sentence
+        # IS the answer, not a number a units label would attach to (see
+        # evidence/metadata.py's/tools/conversational.py's own docstrings).
+        text = str(output["answer_text"] if tool == "metadata" else output["reply"])
+        return text, None, text, limitation
     return str(output), None, str(output), limitation
 
 

@@ -56,6 +56,17 @@ class InferenceResult:
     mask: np.ndarray           # (H, W) int -- argmax class id per pixel
     probabilities: np.ndarray  # (nclasses, H, W) float32 -- softmax, sums to 1 over axis 0
     labels: list[str]
+    # (nclasses,) float32 -- the model's separate scene-level classification
+    # head, sigmoid-activated (confirmed empirically against a real demo
+    # patch: sigmoid probabilities for the classes actually present in the
+    # segmentation mask were all >0.85, softmax crushed everything but the
+    # single largest class -- correct for BigEarthNet's multi-label scene
+    # tagging, where more than one class is routinely true at once).
+    # Indexed by `labels` (this ClassConfig's own alphabetical order) --
+    # NOT by SEGMENTATION_CLASSES/`mask`'s order. See
+    # agent/vocabulary.py's module docstring and evidence/fusion.py for why
+    # conflating the two is a real, previously-made mistake in this project.
+    classification: np.ndarray
     transform: Any = None      # passed through unchanged, for georeferencing
 
 
@@ -83,6 +94,10 @@ def _softmax(logits: np.ndarray, axis: int) -> np.ndarray:
     return exp / np.sum(exp, axis=axis, keepdims=True)
 
 
+def _sigmoid(logits: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-logits))
+
+
 def _normalize_tile(tile: np.ndarray, config: ClassConfig) -> np.ndarray:
     """Select the model's `use_ch` channels (in order) and apply the
     matching per-channel (x - mean) / std."""
@@ -96,9 +111,12 @@ def _normalize_tile(tile: np.ndarray, config: ClassConfig) -> np.ndarray:
     return (selected - mean) / std
 
 
-def _infer_tile(session: ort.InferenceSession, tile: np.ndarray, sensor_id: int, config: ClassConfig) -> np.ndarray:
+def _infer_tile(
+    session: ort.InferenceSession, tile: np.ndarray, sensor_id: int, config: ClassConfig
+) -> tuple[np.ndarray, np.ndarray]:
     """Run one exactly-(C, 120, 120) tile through the model. Returns
-    softmax probabilities, shape (nclasses, 120, 120)."""
+    (segmentation softmax probabilities, shape (nclasses, 120, 120);
+    classification sigmoid probabilities, shape (nclasses,))."""
     normalized = _normalize_tile(tile, config).astype(np.float32)
     batch = normalized[None, :, :, :]
     sensor_arr = np.array([sensor_id], dtype=np.int64)
@@ -106,8 +124,9 @@ def _infer_tile(session: ort.InferenceSession, tile: np.ndarray, sensor_id: int,
     outputs = session.run(
         ["segmentation", "classification"], {"image": batch, "sensor_id": sensor_arr}
     )
-    seg_logits = outputs[0][0]  # (nclasses, 120, 120)
-    return _softmax(seg_logits, axis=0)
+    seg_logits = outputs[0][0]   # (nclasses, 120, 120)
+    cls_logits = outputs[1][0]   # (nclasses,)
+    return _softmax(seg_logits, axis=0), _sigmoid(cls_logits)
 
 
 def _tile_starts(size: int, tile_size: int, stride: int) -> list[int]:
@@ -178,21 +197,36 @@ def segment_image(
 
     prob_accum = np.zeros((config.nclasses, height, width), dtype=np.float64)
     weight_accum = np.zeros((height, width), dtype=np.float64)
+    # Classification is a single scene-level (not per-pixel) vector, so
+    # tiles are combined with one scalar weight each (its valid pixel
+    # area) rather than the segmentation head's per-pixel feather field --
+    # a tile that's mostly real image (not padding) says more about the
+    # whole scene than a tile that's mostly zero-padded edge.
+    classification_accum = np.zeros(config.nclasses, dtype=np.float64)
+    classification_weight = 0.0
 
     for row0 in row_starts:
         for col0 in col_starts:
             tile, valid_h, valid_w = _extract_tile(image, row0, col0, TILE_SIZE)
-            tile_probs = _infer_tile(session, tile, sensor_id, config)
+            tile_seg_probs, tile_cls_probs = _infer_tile(session, tile, sensor_id, config)
 
             prob_accum[:, row0:row0 + valid_h, col0:col0 + valid_w] += (
-                tile_probs[:, :valid_h, :valid_w] * weight_2d[:valid_h, :valid_w]
+                tile_seg_probs[:, :valid_h, :valid_w] * weight_2d[:valid_h, :valid_w]
             )
             weight_accum[row0:row0 + valid_h, col0:col0 + valid_w] += weight_2d[:valid_h, :valid_w]
 
+            tile_weight = float(valid_h * valid_w)
+            classification_accum += tile_cls_probs * tile_weight
+            classification_weight += tile_weight
+
     probabilities = (prob_accum / weight_accum[None, :, :]).astype(np.float32)
     mask = np.argmax(probabilities, axis=0).astype(np.int64)
+    classification = (classification_accum / classification_weight).astype(np.float32)
 
-    return InferenceResult(mask=mask, probabilities=probabilities, labels=config.labels, transform=transform)
+    return InferenceResult(
+        mask=mask, probabilities=probabilities, labels=config.labels,
+        classification=classification, transform=transform,
+    )
 
 
 def run_inference(

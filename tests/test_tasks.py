@@ -46,8 +46,11 @@ def _gemini_json(label: str, confidence: float = 0.9) -> str:
 # --- labels and few-shot prompt ----------------------------------------------
 
 
-def test_six_task_labels():
-    assert TASK_LABELS == ("vqa", "caption", "grounding", "change_vqa", "change_describe", "cross_modal")
+def test_eight_task_labels():
+    assert TASK_LABELS == (
+        "vqa", "caption", "grounding", "change_vqa", "change_describe", "cross_modal",
+        "metadata", "conversational",
+    )
 
 
 def test_few_shot_examples_cover_every_label():
@@ -144,6 +147,13 @@ def test_no_api_key_and_no_client_uses_fallback_directly(tmp_path, monkeypatch):
     ("Did the urban area grow between 2019 and 2023?", "change_vqa"),
     ("Describe what changed between these two images.", "change_describe"),
     ("Does the SAR image confirm the flooding seen in the optical image?", "cross_modal"),
+    ("Where is this?", "metadata"),
+    ("When was this taken?", "metadata"),
+    ("What sensor is this?", "metadata"),
+    ("What resolution is this?", "metadata"),
+    ("What's in this scene?", "metadata"),
+    ("Hi there!", "conversational"),
+    ("Hello, how are you?", "conversational"),
 ])
 def test_keyword_fallback_shapes(query, expected):
     label, confidence = tasks._keyword_fallback(query)
@@ -152,6 +162,19 @@ def test_keyword_fallback_shapes(query, expected):
 
 
 def test_keyword_fallback_default_has_lower_confidence():
-    label, confidence = tasks._keyword_fallback("What is this?")
+    # No distinctive signal at all -- still labeled "vqa" here (a coarse
+    # trace label only), but agent/planner.py's own, more detailed keyword
+    # fallback is what actually decides whether a real plan can be built
+    # for a query like this, independent of this label -- see
+    # tests/test_planner.py's test_fallback_unparseable_query_is_conversational.
+    label, confidence = tasks._keyword_fallback("What is the meaning of life?")
     assert label == "vqa"
     assert confidence < 0.75
+
+
+def test_where_is_this_is_metadata_not_grounding():
+    # "where is this" (the scene's own location) must not fall through to
+    # "grounding" ("where is the X" -- locate a region within the scene)
+    # just because both start with "where is".
+    label, _confidence = tasks._keyword_fallback("Where is this scene located?")
+    assert label == "metadata"

@@ -49,7 +49,10 @@ GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") or None
 DEFAULT_CACHE_DIR = AGENT_DIR / ".cache" / "tasks"
 GEMINI_MODEL = "gemini-2.5-flash"
 
-TASK_LABELS = ("vqa", "caption", "grounding", "change_vqa", "change_describe", "cross_modal")
+TASK_LABELS = (
+    "vqa", "caption", "grounding", "change_vqa", "change_describe", "cross_modal",
+    "metadata", "conversational",
+)
 
 TASK_DESCRIPTIONS: dict[str, str] = {
     "vqa": "A factual/numeric question about a single image (counts, presence, land cover, area).",
@@ -58,6 +61,9 @@ TASK_DESCRIPTIONS: dict[str, str] = {
     "change_vqa": "A factual/numeric question about what changed between two dates.",
     "change_describe": "A request for a free-text description of what changed between two dates.",
     "cross_modal": "A question requiring reasoning across two sensors/modalities (e.g. optical vs SAR).",
+    "metadata": "A question about the scene's own record -- location, acquisition date, sensor/"
+                "platform, resolution, or which classes are present -- not the imagery itself.",
+    "conversational": "A greeting or an off-topic question, not about any satellite scene.",
 }
 
 
@@ -88,6 +94,10 @@ FEW_SHOT_EXAMPLES: list[tuple[str, str]] = [
     ("Summarize the land-cover changes over time.", "change_describe"),
     ("Does the SAR image confirm the flooding visible in the optical image?", "cross_modal"),
     ("Compare the radar and optical imagery for this area.", "cross_modal"),
+    ("Where is this scene located?", "metadata"),
+    ("What sensor was used to capture this?", "metadata"),
+    ("Hi there!", "conversational"),
+    ("What's your favorite color?", "conversational"),
 ]
 
 assert {label for _, label in FEW_SHOT_EXAMPLES} == set(TASK_LABELS)
@@ -168,9 +178,35 @@ _CHANGE_WORDS = (
 _DESCRIBE_WORDS = ("describe", "summarize", "summarise", "what does this show", "caption")
 _LOCATE_WORDS = ("where is", "point to", "locate", "show me the", "find the")
 
+# A short, common set of greeting openers -- matched at the START of the
+# (trimmed, lowercased) query, not anywhere in it, so a real question that
+# happens to contain one of these words elsewhere is never misclassified.
+_GREETING_RE = re.compile(
+    r"^(hi|hello|hey|hiya|howdy|yo|greetings|good morning|good afternoon|good evening)\b"
+)
+
+# Metadata: a question about the SCENE'S OWN RECORD (location, acquisition
+# date, sensor/platform, resolution, or which classes are present), not
+# about the imagery itself. "where is this" is checked here, and BEFORE
+# _LOCATE_WORDS below, specifically so it doesn't fall through to
+# "grounding" -- "where is this [scene]" asks about the whole scene's own
+# location, "where is the water body" asks to locate a region within it.
+_METADATA_WORDS = (
+    "where is this", "when was this", "acquisition date", "what date",
+    "what sensor", "what satellite", "what platform",
+    "what resolution", "ground sample distance", "what's the gsd", "what is the gsd",
+    "what's in this scene", "what is in this scene", "what classes are", "what land cover is here",
+)
+
 
 def _keyword_fallback(query: str) -> tuple[str, float]:
     q = query.strip().lower()
+
+    if _GREETING_RE.match(q):
+        return "conversational", 0.9
+
+    if any(word in q for word in _METADATA_WORDS):
+        return "metadata", 0.8
 
     if any(word in q for word in _CROSS_MODAL_WORDS):
         return "cross_modal", 0.75
@@ -186,7 +222,14 @@ def _keyword_fallback(query: str) -> tuple[str, float]:
     if any(word in q for word in _LOCATE_WORDS):
         return "grounding", 0.75
 
-    return "vqa", 0.4  # no distinctive signal -- default guess, low confidence
+    # No distinctive signal at all -- still default to "vqa" here (this is
+    # only a trace LABEL, not what builds the actual plan: agent/planner.py's
+    # own, more detailed keyword fallback separately parses "how many X"/
+    # "how much X"/"is X present" style phrasing that this coarser word list
+    # never sees at all, and correctly builds a real plan for it regardless
+    # of this label). Only agent/planner.py's fallback -- which actually
+    # knows whether it could build a plan -- decides "conversational".
+    return "vqa", 0.4
 
 
 # --- Main entry point ---------------------------------------------------------

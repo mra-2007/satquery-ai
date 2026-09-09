@@ -41,7 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agent.dsl import Plan, validate
 from agent.registry import REGISTRY
-from agent.tasks import _CHANGE_WORDS, _CROSS_MODAL_WORDS, _DESCRIBE_WORDS
+from agent.tasks import _CHANGE_WORDS, _CROSS_MODAL_WORDS, _DESCRIBE_WORDS, _GREETING_RE
 from agent.vocabulary import resolve_noun
 
 AGENT_DIR = Path(__file__).resolve().parent
@@ -236,6 +236,16 @@ def _write_cache(path: Path, plan: Plan) -> None:
 
 # --- Deterministic keyword fallback (used when the API is unavailable) -----
 
+# Metadata: same vocabulary as agent/tasks.py's own _METADATA_WORDS (that
+# module only needs to know "is this ANY metadata question" for its coarse
+# trace label; this one needs to know WHICH aspect, to fill in the
+# "metadata" tool's own `aspect` parameter).
+_METADATA_LOCATION_WORDS = ("where is this",)
+_METADATA_DATE_WORDS = ("when was this", "acquisition date", "what date")
+_METADATA_SENSOR_WORDS = ("what sensor", "what satellite", "what platform")
+_METADATA_RESOLUTION_WORDS = ("what resolution", "ground sample distance", "what's the gsd", "what is the gsd")
+_METADATA_CLASSES_WORDS = ("what's in this scene", "what is in this scene", "what classes are", "what land cover is here")
+
 _FILLER = r"(?:\s+(?:is there|are there|are visible|can be counted))?"
 _COUNT_RE = re.compile(rf"^how many (.+?){_FILLER}$")
 _SIZE_AREA_OF_RE = re.compile(
@@ -303,6 +313,32 @@ def _resolve_class(phrase: str, scene: SceneDescriptor) -> int | list[int]:
 def _keyword_fallback(query: str, scene: SceneDescriptor) -> Plan:
     q = query.strip().rstrip("?").strip().lower()
 
+    # The 'conversational' tool (tools/conversational.py) needs no scene
+    # context at all -- a greeting isn't a question about the imagery.
+    # _GREETING_RE is agent.tasks's own pattern (shared, not duplicated),
+    # checked first so this and classify_task's own fallback can never
+    # disagree about what counts as a greeting.
+    if _GREETING_RE.match(q):
+        return _fallback_plan("conversational", {"kind": "greeting"})
+
+    # The 'metadata' tool (evidence/metadata.py) answers from the scene's
+    # own RECORD, not the imagery -- which aspect is picked here from the
+    # matched phrasing. "where is this [scene]" (this scene's own
+    # location) is deliberately specific enough not to also match "where
+    # is the water body" (locate a region within it, classify_task's own
+    # "grounding" label) -- both start with "where is", but only "this"
+    # (not "the/a X") means the scene's own location is being asked about.
+    if any(word in q for word in _METADATA_LOCATION_WORDS):
+        return _fallback_plan("metadata", {"aspect": "location"})
+    if any(word in q for word in _METADATA_DATE_WORDS):
+        return _fallback_plan("metadata", {"aspect": "date"})
+    if any(word in q for word in _METADATA_SENSOR_WORDS):
+        return _fallback_plan("metadata", {"aspect": "sensor"})
+    if any(word in q for word in _METADATA_RESOLUTION_WORDS):
+        return _fallback_plan("metadata", {"aspect": "resolution"})
+    if any(word in q for word in _METADATA_CLASSES_WORDS):
+        return _fallback_plan("metadata", {"aspect": "classes"})
+
     # The 'cross_modal' tool (tools/cross_modal.py) likewise takes no
     # required parameters -- it always segments whatever raw stack the
     # executor was given, three ways. _CROSS_MODAL_WORDS is agent.tasks's
@@ -364,7 +400,12 @@ def _keyword_fallback(query: str, scene: SceneDescriptor) -> Plan:
             parameters = {"class_id": _resolve_class(m.group(1), scene), "min_area_m2": DEFAULT_MIN_AREA_M2}
             return _fallback_plan("presence", parameters)
 
-    raise PlannerError(f"keyword fallback: could not parse query {query!r}")
+    # Nothing above recognized this query at all -- not unresolvable within
+    # a recognized pattern (that's _resolve_class's own PlannerError above,
+    # still raised as before), genuinely unparseable. Per this feature's
+    # own requirement, that's not an error condition: a scoped reply beats
+    # a raw 422 for an off-topic or malformed question.
+    return _fallback_plan("conversational", {"kind": "off_topic"})
 
 
 def _fallback_plan(tool: str, parameters: dict) -> Plan:

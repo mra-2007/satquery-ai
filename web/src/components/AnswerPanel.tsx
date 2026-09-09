@@ -2,10 +2,19 @@ import { useState } from "react";
 
 import { reportUrl } from "../api/client";
 import { useCountUp } from "../hooks/useCountUp";
-import type { QueryResponse } from "../api/types";
+import type { ConversationalSummary, QueryResponse, TraceStep } from "../api/types";
 import { downloadJson } from "../utils/download";
-import { findVerification } from "./VerificationPanel";
+import { findFusion, findVerification } from "./VerificationPanel";
 import "./AnswerPanel.css";
+
+/** Finds the one trace step tools/conversational.py's reply() produced,
+ * whenever the planner routed a greeting or an off-topic query there --
+ * identifiable purely by tool name, same as findVerification/findFusion. */
+function findConversational(trace: TraceStep[] | null): ConversationalSummary | null {
+  if (!trace) return null;
+  const step = trace.find((s) => s.tool === "conversational");
+  return (step?.output as ConversationalSummary | undefined) ?? null;
+}
 
 interface AnswerPanelProps {
   response: QueryResponse | null;
@@ -60,109 +69,151 @@ export default function AnswerPanel({
     );
   } else if (response) {
     const { evidence, limitation } = response;
-    const isWithheld = limitation != null;
-    const verification = findVerification(evidence.execution_trace);
-    stateClass = isWithheld ? "answer-panel--withheld" : "answer-panel--verified";
+    const conversational = findConversational(evidence.execution_trace);
 
-    body = (
-      <>
-        {isWithheld ? (
-          <>
-            <span className="label answer-panel__status-label answer-panel__status-label--withheld">
-              Exact answer withheld
-            </span>
-            <hr className="hairline answer-panel__rule" />
-            <div className="answer-panel__reason-block">
-              <span className="label">WHY</span>
-              <p className="answer-panel__reason-text">{limitation}</p>
-            </div>
-            <hr className="hairline answer-panel__rule" />
-            <div className="answer-panel__reason-block">
-              <span className="label">COMPUTED INSTEAD</span>
-              <AnswerValue value={evidence.value} units={evidence.units} tone="withheld" />
-            </div>
-          </>
-        ) : (
-          <>
-            <span className="label answer-panel__status-label answer-panel__status-label--verified">Verified</span>
-            <AnswerValue value={evidence.value} units={evidence.units} tone="verified" />
-          </>
-        )}
-
-        <hr className="hairline answer-panel__rule" />
-        <div className="answer-panel__confidence">
-          <span className="label">CONFIDENCE</span>
-          {evidence.confidence.map((entry) => (
-            <div className="answer-panel__confidence-row" key={entry.source}>
-              <span className="answer-panel__confidence-source">{entry.source}</span>
-              <div className="answer-panel__confidence-bar-track">
-                <div
-                  className={
-                    "answer-panel__confidence-bar-fill" +
-                    (entry.confidence >= 1 ? " answer-panel__confidence-bar-fill--exact" : "")
-                  }
-                  style={{ width: `${entry.confidence * 100}%` }}
-                />
-              </div>
-              <span className="tabular answer-panel__confidence-value">{entry.confidence.toFixed(2)}</span>
-            </div>
-          ))}
-        </div>
-
-        {verification && (
-          <>
-            <hr className="hairline answer-panel__rule" />
-            <button className="answer-panel__trace-toggle" onClick={onToggleVerification} aria-expanded={verificationOpen}>
-              <span className="label">Verification</span>
-              <span
-                className={
-                  "tabular answer-panel__trace-count" +
-                  (verification.all_passed
-                    ? " answer-panel__verification-count--pass"
-                    : " answer-panel__verification-count--fail")
-                }
-              >
-                {verification.claims.filter((c) => c.passed).length}/{verification.claims.length} claims
-              </span>
-              <span
-                className={"answer-panel__trace-chevron" + (verificationOpen ? " answer-panel__trace-chevron--open" : "")}
-              >
-                ›
-              </span>
-            </button>
-          </>
-        )}
-
-        <hr className="hairline answer-panel__rule" />
-        <button className="answer-panel__trace-toggle" onClick={onToggleTrace} aria-expanded={traceOpen}>
-          <span className="label">Execution trace</span>
-          <span className="tabular answer-panel__trace-count">{evidence.execution_trace.length} steps</span>
-          <span className={"answer-panel__trace-chevron" + (traceOpen ? " answer-panel__trace-chevron--open" : "")}>
-            ›
+    if (conversational) {
+      // A distinct neutral state, deliberately -- a greeting or an
+      // off-topic reply is not a claim about the scene, so it gets
+      // neither the "verified" green nor the "withheld" amber treatment,
+      // and skips the confidence/verification/export sections that only
+      // make sense for an actual measurement.
+      stateClass = "answer-panel--neutral";
+      body = (
+        <>
+          <span className="label answer-panel__status-label answer-panel__status-label--neutral">
+            SatQuery AI
           </span>
-        </button>
-
-        <hr className="hairline answer-panel__rule" />
-        <div className="answer-panel__export-row">
-          <a
-            className="answer-panel__export-link"
-            href={reportUrl(response.report_id)}
-            download={`report_${response.report_id}.json`}
-          >
-            <span aria-hidden="true">⭳</span> REPORT
-          </a>
-          <button
-            type="button"
-            className="answer-panel__export-link"
-            onClick={() => downloadJson(`geometry_${response.report_id}.geojson`, evidence.geometry)}
-          >
-            <span aria-hidden="true">⭳</span> GEOJSON
+          <p className="answer-panel__text-answer">{conversational.reply}</p>
+          <hr className="hairline answer-panel__rule" />
+          <button className="answer-panel__trace-toggle" onClick={onToggleTrace} aria-expanded={traceOpen}>
+            <span className="label">Execution trace</span>
+            <span className="tabular answer-panel__trace-count">{evidence.execution_trace.length} steps</span>
+            <span className={"answer-panel__trace-chevron" + (traceOpen ? " answer-panel__trace-chevron--open" : "")}>
+              ›
+            </span>
           </button>
-        </div>
+        </>
+      );
+    } else {
+      const isWithheld = limitation != null;
+      const verification = findVerification(evidence.execution_trace);
+      const fusion = findFusion(evidence.execution_trace);
+      stateClass = isWithheld ? "answer-panel--withheld" : "answer-panel--verified";
 
-        <p className="answer-panel__query">"{response.query}"</p>
-      </>
-    );
+      body = (
+        <>
+          {isWithheld ? (
+            <>
+              <span className="label answer-panel__status-label answer-panel__status-label--withheld">
+                Exact answer withheld
+              </span>
+              <hr className="hairline answer-panel__rule" />
+              <div className="answer-panel__reason-block">
+                <span className="label">WHY</span>
+                <p className="answer-panel__reason-text">{limitation}</p>
+              </div>
+              <hr className="hairline answer-panel__rule" />
+              <div className="answer-panel__reason-block">
+                <span className="label">COMPUTED INSTEAD</span>
+                <AnswerValue value={evidence.value} units={evidence.units} tone="withheld" />
+              </div>
+            </>
+          ) : (
+            <>
+              <span className="label answer-panel__status-label answer-panel__status-label--verified">Verified</span>
+              <AnswerValue value={evidence.value} units={evidence.units} tone="verified" />
+            </>
+          )}
+
+          <hr className="hairline answer-panel__rule" />
+          <div className="answer-panel__confidence">
+            <span className="label">CONFIDENCE</span>
+            {evidence.confidence.map((entry) => (
+              <div className="answer-panel__confidence-row" key={entry.source}>
+                <span className="answer-panel__confidence-source">{entry.source}</span>
+                <div className="answer-panel__confidence-bar-track">
+                  <div
+                    className={
+                      "answer-panel__confidence-bar-fill" +
+                      (entry.confidence >= 1 ? " answer-panel__confidence-bar-fill--exact" : "")
+                    }
+                    style={{ width: `${entry.confidence * 100}%` }}
+                  />
+                </div>
+                <span className="tabular answer-panel__confidence-value">{entry.confidence.toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+
+          {(verification || fusion) && (
+            <>
+              <hr className="hairline answer-panel__rule" />
+              <button className="answer-panel__trace-toggle" onClick={onToggleVerification} aria-expanded={verificationOpen}>
+                <span className="label">Verification</span>
+                {verification && (
+                  <span
+                    className={
+                      "tabular answer-panel__trace-count" +
+                      (verification.all_passed
+                        ? " answer-panel__verification-count--pass"
+                        : " answer-panel__verification-count--fail")
+                    }
+                  >
+                    {verification.claims.filter((c) => c.passed).length}/{verification.claims.length} claims
+                  </span>
+                )}
+                {!verification && fusion && (
+                  <span
+                    className={
+                      "tabular answer-panel__trace-count" +
+                      (fusion.fused_present
+                        ? " answer-panel__verification-count--pass"
+                        : " answer-panel__verification-count--fail")
+                    }
+                  >
+                    {fusion.sources.filter((s) => s.available).length}/{fusion.sources.length} sources
+                  </span>
+                )}
+                <span
+                  className={"answer-panel__trace-chevron" + (verificationOpen ? " answer-panel__trace-chevron--open" : "")}
+                >
+                  ›
+                </span>
+              </button>
+            </>
+          )}
+
+          <hr className="hairline answer-panel__rule" />
+          <button className="answer-panel__trace-toggle" onClick={onToggleTrace} aria-expanded={traceOpen}>
+            <span className="label">Execution trace</span>
+            <span className="tabular answer-panel__trace-count">{evidence.execution_trace.length} steps</span>
+            <span className={"answer-panel__trace-chevron" + (traceOpen ? " answer-panel__trace-chevron--open" : "")}>
+              ›
+            </span>
+          </button>
+
+          <hr className="hairline answer-panel__rule" />
+          <div className="answer-panel__export-row">
+            <a
+              className="answer-panel__export-link"
+              href={reportUrl(response.report_id)}
+              download={`report_${response.report_id}.json`}
+            >
+              <span aria-hidden="true">⭳</span> REPORT
+            </a>
+            <button
+              type="button"
+              className="answer-panel__export-link"
+              onClick={() => downloadJson(`geometry_${response.report_id}.geojson`, evidence.geometry)}
+            >
+              <span aria-hidden="true">⭳</span> GEOJSON
+            </button>
+          </div>
+
+          <p className="answer-panel__query">"{response.query}"</p>
+        </>
+      );
+    }
   }
 
   const panelClass =

@@ -17,7 +17,7 @@ from agent.registry import (
 
 EXPECTED_TOOL_NAMES = {
     "segment", "count", "size", "presence", "adjacency", "change", "caption", "ground", "cross_modal",
-    "verify",
+    "verify", "fusion", "metadata", "conversational",
 }
 
 # 16 bands: enough for every registered tool, including cross_modal (which
@@ -30,7 +30,7 @@ SENTINEL1_SAR = {"gsd_metres": 10.0, "modality": "sar", "band_count": 2}
 # --- Tool dataclass and registration -----------------------------------------
 
 
-def test_registry_has_exactly_the_ten_required_tools():
+def test_registry_has_exactly_the_required_tools():
     assert set(REGISTRY) == EXPECTED_TOOL_NAMES
 
 
@@ -69,12 +69,13 @@ def test_select_model_sar_excludes_optical_only_tools():
     selected_names = {t.name for t in result.tools}
     assert "caption" not in selected_names
     assert "ground" not in selected_names
-    # cross_modal is also excluded here, but for a different reason: a
-    # real Sentinel-1-only scene has just 2 (VV/VH) bands, short of the
-    # 16 cross_modal's own segmentation runs require -- not a modality
-    # rejection like caption/ground's.
+    # cross_modal/fusion are also excluded here, but for a different
+    # reason: a real Sentinel-1-only scene has just 2 (VV/VH) bands, short
+    # of the 16 both tools' own segmentation runs require -- not a
+    # modality rejection like caption/ground's.
     assert "cross_modal" not in selected_names
-    assert selected_names == EXPECTED_TOOL_NAMES - {"caption", "ground", "cross_modal"}
+    assert "fusion" not in selected_names
+    assert selected_names == EXPECTED_TOOL_NAMES - {"caption", "ground", "cross_modal", "fusion"}
 
 
 def test_select_model_sar_rejection_reason_mentions_modality():
@@ -100,9 +101,9 @@ def test_select_model_insufficient_bands_excludes_only_band_limited_tools():
     grayscale = {"gsd_metres": 10.0, "modality": "optical", "band_count": 1}
     result = select_model(grayscale)
     selected_names = {t.name for t in result.tools}
-    # caption/ground need >=3 bands; cross_modal needs the full 16-channel
-    # input; the class-raster tools need only 1
-    assert selected_names == EXPECTED_TOOL_NAMES - {"caption", "ground", "cross_modal"}
+    # caption/ground need >=3 bands; cross_modal/fusion need the full
+    # 16-channel input; the class-raster tools need only 1
+    assert selected_names == EXPECTED_TOOL_NAMES - {"caption", "ground", "cross_modal", "fusion"}
 
 
 def test_select_model_logs_a_decision_for_every_registered_tool():
@@ -168,6 +169,33 @@ def test_validate_parameters_cross_modal_accepts_cloud_simulation_bool():
 
 def test_cross_modal_requires_the_models_full_16_channel_input():
     assert REGISTRY["cross_modal"].required_band_count == 16
+
+
+def test_validate_parameters_fusion_accepts_class_id():
+    validate_parameters(REGISTRY["fusion"], {"class_id": 1})  # no raise
+    validate_parameters(REGISTRY["fusion"], {"class_id": [1, 2]})  # no raise -- a generic-noun union
+    with pytest.raises(ParameterValidationError):
+        validate_parameters(REGISTRY["fusion"], {"class_id": 1, "bogus": True})
+    with pytest.raises(ParameterValidationError):
+        validate_parameters(REGISTRY["fusion"], {"class_id": "water"})
+
+
+def test_fusion_requires_the_models_full_16_channel_input():
+    assert REGISTRY["fusion"].required_band_count == 16
+
+
+def test_validate_parameters_metadata_accepts_aspect():
+    validate_parameters(REGISTRY["metadata"], {"aspect": "location"})  # no raise
+    with pytest.raises(ParameterValidationError):
+        validate_parameters(REGISTRY["metadata"], {"aspect": "location", "bogus": True})
+    with pytest.raises(ParameterValidationError):
+        validate_parameters(REGISTRY["metadata"], {"aspect": 1})
+
+
+def test_validate_parameters_conversational_accepts_kind():
+    validate_parameters(REGISTRY["conversational"], {"kind": "greeting"})  # no raise
+    with pytest.raises(ParameterValidationError):
+        validate_parameters(REGISTRY["conversational"], {"kind": "greeting", "bogus": True})
 
 
 # --- capability_table: computed from GSD, not hardcoded ----------------------

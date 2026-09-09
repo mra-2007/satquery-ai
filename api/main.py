@@ -540,7 +540,9 @@ def query_scene(request: QueryRequest) -> QueryResponse:
     after = mask if before is not None else None
     stack = load_scene_stack_for_row(row)
     classes = {int(k): v for k, v in json.loads(row["classes_json"]).items()}
-    metadata = {"gsd_metres": row["gsd_metres"]}
+    # filename/sensor enrich the 'metadata' tool's own scene-record lookup
+    # (evidence/metadata.py) -- every other tool ignores these extra keys.
+    metadata = {"gsd_metres": row["gsd_metres"], "filename": row["filename"], "sensor": row["sensor"]}
 
     scene = SceneDescriptor(
         layers=["class_raster"], classes=classes, sensor=row["sensor"],

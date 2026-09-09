@@ -114,6 +114,13 @@
 .answer-panel__status-label--error {
   color: var(--signal-error);
 }
+/* Deliberately the plainest of the four -- a greeting/off-topic reply is
+   not a claim about the scene, so it gets no signal colour at all (not
+   verified green, not withheld amber), just the same dim tertiary tone
+   idle/pending text already uses. */
+.answer-panel__status-label--neutral {
+  color: var(--text-2);
+}
 
 /* The number: plain and large. Size is the emphasis, not colour. */
 .answer-panel__value-block {

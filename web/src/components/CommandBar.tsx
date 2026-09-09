@@ -7,6 +7,8 @@ export const ANALYZE_EXAMPLES = [
   "Is there any built-up area near water?",
   "How many buildings are there?",
   "Describe this scene",
+  "Where is this?",
+  "What's in this scene?",
 ];
 
 export const CHANGE_EXAMPLES = ["What changed between these dates?", "Has built-up area increased?"];

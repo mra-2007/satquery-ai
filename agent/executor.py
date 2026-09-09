@@ -26,9 +26,10 @@ import numpy as np
 
 from agent.dsl import Plan, execute as _dsl_execute
 from agent.guardrail import apply_capability_guardrail
-from evidence import change, ops
+from evidence import change, fusion, metadata as metadata_tool, ops
 from evidence.schema import TraceStep
 from tools import caption as caption_tool
+from tools import conversational as conversational_tool
 from tools import cross_modal as cross_modal_tool
 from tools import grounding as grounding_tool
 from tools import verifier as verifier_tool
@@ -102,6 +103,27 @@ def _summarize(output: Any) -> Any:
                 for f in output.findings
             ],
         }
+    if isinstance(output, fusion.FusionResult):
+        return {
+            "class_id": output.class_id,
+            "class_name": output.class_name,
+            "fused_present": output.fused_present,
+            "fused_confidence": output.fused_confidence,
+            "agreement": output.agreement,
+            "agreement_fraction": output.agreement_fraction,
+            "correlated_sources": list(output.correlated_sources),
+            "weighting_note": output.weighting_note,
+            "summary": output.summary,
+            "sources": [
+                {"source": s.source, "available": s.available, "present": s.present,
+                 "confidence": s.confidence, "weight": s.weight, "detail": s.detail}
+                for s in output.sources
+            ],
+        }
+    if isinstance(output, metadata_tool.MetadataResult):
+        return {"aspect": output.aspect, "answer_text": output.answer_text, "detail": output.detail}
+    if isinstance(output, conversational_tool.ConversationalReply):
+        return {"kind": output.kind, "reply": output.reply}
     if isinstance(output, verifier_tool.VerificationResult):
         return {
             "original_answer": output.original_answer,
@@ -145,9 +167,16 @@ def run(
     """Run every step of `plan` against evidence/ops.py
     (count/size/presence/adjacency, over `mask`), evidence/change.py
     (change, over `before`/`after`), tools/caption.py and tools/grounding.py
-    (caption/ground, over `mask`), and tools/cross_modal.py (cross_modal,
+    (caption/ground, over `mask`), tools/cross_modal.py (cross_modal,
     over the raw `stack` -- it segments internally, three ways, so it
-    needs the model's full multi-channel input, not a pre-computed mask).
+    needs the model's full multi-channel input, not a pre-computed mask),
+    evidence/fusion.py (fusion, also over the raw `stack` -- it needs
+    the real optical bands for its spectral index and the real SAR
+    channels when present, neither of which survive in a pre-computed mask),
+    evidence/metadata.py (metadata, fact retrieval from the scene's own
+    record -- `metadata['filename']`/`metadata['sensor']` when the caller
+    has them), and tools/conversational.py (conversational, a canned
+    greeting/off-topic reply needing no raster at all).
 
     When `classes` (the scene's class_id -> name mapping) is given, the
     capability guardrail runs first: any `count` step targeting a class
@@ -215,6 +244,21 @@ def run(
         if mask is None:
             raise ExecutorError("plan uses the 'verify' tool but no mask was provided")
         tool_functions["verify"] = functools.partial(verifier_tool.verify_answer, mask, metadata)
+
+    if "fusion" in needed_tools:
+        if stack is None:
+            raise ExecutorError("plan uses the 'fusion' tool but no stack was provided")
+        tool_functions["fusion"] = functools.partial(fusion.fuse_evidence, stack, metadata)
+
+    if "metadata" in needed_tools:
+        if mask is None:
+            raise ExecutorError("plan uses the 'metadata' tool but no mask was provided")
+        tool_functions["metadata"] = functools.partial(metadata_tool.scene_metadata, mask, metadata)
+
+    if "conversational" in needed_tools:
+        # No raster dependency at all -- a greeting or an off-topic
+        # question isn't about the scene, so there is nothing to bind.
+        tool_functions["conversational"] = conversational_tool.reply
 
     dsl_result = _dsl_execute(plan, tool_functions)
 

@@ -63,6 +63,12 @@ def test_single_tile_exact_size(session, config):
     sums = result.probabilities.sum(axis=0)
     assert np.allclose(sums, 1.0, atol=1e-4)  # a real softmax, not raw logits
 
+    # classification is a separate, scene-level, sigmoid-activated head --
+    # each entry independently in [0, 1], NOT summing to 1 like softmax
+    assert result.classification.shape == (19,)
+    assert np.all(result.classification >= 0.0) and np.all(result.classification <= 1.0)
+    assert not np.isclose(result.classification.sum(), 1.0)
+
 
 @pytest.mark.parametrize("sensor", ["optical", "sar", "fused"])
 def test_all_three_sensor_ids_run(session, config, sensor):
@@ -79,6 +85,10 @@ def test_larger_image_is_tiled_and_stitched(session, config):
     assert result.probabilities.shape == (19, 250, 300)
     sums = result.probabilities.sum(axis=0)
     assert np.allclose(sums, 1.0, atol=1e-4)  # holds everywhere, including overlap zones
+
+    # classification stays scene-level (one vector) even when segmentation
+    # tiles -- it's aggregated across tiles, not stitched per pixel
+    assert result.classification.shape == (19,)
 
 
 def test_image_smaller_than_one_tile_is_cropped_back(session, config):
@@ -119,18 +129,25 @@ def test_run_inference_convenience_loads_defaults():
 class _FakeSession:
     """Ignores its input entirely; returns a strong, one-hot-like
     prediction for `target_class`, in call order -- lets us know exactly
-    which tile produced which logits, to check the blend math precisely."""
+    which tile produced which logits, to check the blend math precisely.
+    `cls_logits_sequence` (default: all zeros, i.e. sigmoid 0.5 for every
+    class every tile) lets a test control the classification head per
+    tile independently of the segmentation target."""
 
-    def __init__(self, class_sequence):
+    def __init__(self, class_sequence, cls_logits_sequence=None):
         self._classes = list(class_sequence)
+        self._cls_logits = cls_logits_sequence
         self.calls = 0
 
     def run(self, output_names, feed):
         target_class = self._classes[self.calls]
+        cls_logits = (
+            self._cls_logits[self.calls] if self._cls_logits is not None else np.zeros(19, dtype=np.float32)
+        )
         self.calls += 1
         logits = np.full((1, 19, 120, 120), -10.0, dtype=np.float32)
         logits[0, target_class, :, :] = 10.0
-        classification = np.zeros((1, 19), dtype=np.float32)
+        classification = cls_logits.reshape(1, 19).astype(np.float32)
         return [logits, classification]
 
 
@@ -143,6 +160,35 @@ def _uniform_config() -> ClassConfig:
         mean=np.zeros(16),
         std=np.ones(16),
     )
+
+
+def test_classification_head_uses_sigmoid_not_softmax():
+    config = _uniform_config()
+    fake_session = _FakeSession(class_sequence=[3])
+    image = np.zeros((16, 120, 120), dtype=np.float32)
+
+    result = infer.segment_image(image, "optical", session=fake_session, config=config)
+    assert np.allclose(result.classification, 0.5)  # sigmoid(0) == 0.5 for every class
+
+
+def test_classification_is_averaged_across_tiles():
+    # height=210 -> two tiles (see _tile_starts), each fully valid 120x120
+    # (every tile in this tiling scheme is -- see its own "flush with the
+    # far edge" guarantee), each given DISTINCT classification logits, so
+    # the result must be their plain average -- not e.g. just the last
+    # tile's value, and not the segmentation target class leaking in.
+    config = _uniform_config()
+    cls_logits = [
+        np.full(19, 4.0, dtype=np.float32),   # sigmoid(4)  ~= 0.982
+        np.full(19, -4.0, dtype=np.float32),  # sigmoid(-4) ~= 0.018
+    ]
+    fake_session = _FakeSession(class_sequence=[5, 7], cls_logits_sequence=cls_logits)
+    image = np.zeros((16, 210, 120), dtype=np.float32)
+
+    result = infer.segment_image(image, "optical", session=fake_session, config=config)
+
+    expected = (1 / (1 + np.exp(-4.0)) + 1 / (1 + np.exp(4.0))) / 2
+    assert np.allclose(result.classification, expected, atol=1e-4)
 
 
 def test_feathered_blending_is_a_smooth_crossfade_not_a_seam():

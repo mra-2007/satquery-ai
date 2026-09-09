@@ -8,7 +8,10 @@ import pytest
 from agent.dsl import Plan, PlanValidationError
 from agent.executor import ExecutionTrace, ExecutorError, run
 from evidence.change import ChangeReport
+from evidence.fusion import FusionResult
+from evidence.metadata import MetadataResult
 from tools.caption import CaptionResult
+from tools.conversational import ConversationalReply
 from tools.cross_modal import CrossModalResult
 from tools.grounding import GroundingResult
 
@@ -347,6 +350,85 @@ def test_run_without_stack_raises_when_plan_needs_cross_modal():
     plan = Plan.model_validate([{"id": "x1", "tool": "cross_modal", "parameters": {}}])
     with pytest.raises(ExecutorError, match="cross_modal"):
         run(plan, GSD_10M, mask=_water_mask())  # a mask alone isn't enough -- cross_modal needs the raw stack
+
+
+def test_run_executes_fusion_tool():
+    # fusion needs the raw stack too (real optical bands for its spectral
+    # index, real SAR channels when present) -- real model, no fake
+    # session hook at the executor layer, same as cross_modal above.
+    rng = np.random.default_rng(0)
+    stack = (rng.random((16, 120, 120)) * 1000).astype(np.float32)
+
+    plan = Plan.model_validate([{"id": "f1", "tool": "fusion", "parameters": {"class_id": 1}}])
+    result, trace = run(plan, GSD_10M, stack=stack)
+
+    assert isinstance(result["f1"], FusionResult)
+
+    entry = trace.steps[0]
+    assert entry.tool == "fusion"
+    assert entry.task == "execute:f1"
+    # the trace holds a SUMMARY (plain dict), not the raw FusionResult dataclass
+    assert entry.output["class_id"] == 1
+    assert entry.output["summary"] == result["f1"].summary
+    assert isinstance(entry.output["sources"], list) and len(entry.output["sources"]) == 4
+    assert set(entry.output["agreement"]) == {"segmentation", "classification", "spectral_index", "sar"}
+    assert "encoder" in entry.output["weighting_note"]
+
+
+def test_run_without_stack_raises_when_plan_needs_fusion():
+    plan = Plan.model_validate([{"id": "f1", "tool": "fusion", "parameters": {"class_id": 1}}])
+    with pytest.raises(ExecutorError, match="fusion"):
+        run(plan, GSD_10M, mask=_water_mask())  # a mask alone isn't enough -- fusion needs the raw stack
+
+
+def test_run_executes_metadata_tool():
+    metadata = {"gsd_metres": 10.0, "filename": "S2A_MSIL2A_20170617T113321_N9999_R080_T29UPU_13_55.npz", "sensor": "fused"}
+    plan = Plan.model_validate([{"id": "m1", "tool": "metadata", "parameters": {"aspect": "resolution"}}])
+    result, trace = run(plan, metadata, mask=_water_mask())
+
+    assert isinstance(result["m1"], MetadataResult)
+    assert result["m1"].aspect == "resolution"
+
+    entry = trace.steps[0]
+    assert entry.tool == "metadata"
+    assert entry.task == "execute:m1"
+    assert entry.confidence == pytest.approx(1.0)  # metadata is fact retrieval -- always full confidence
+    # the trace holds a SUMMARY (plain dict), not the raw MetadataResult dataclass
+    assert entry.output["aspect"] == "resolution"
+    assert entry.output["answer_text"] == result["m1"].answer_text
+
+
+def test_run_metadata_date_aspect_reads_the_real_filename():
+    metadata = {"gsd_metres": 10.0, "filename": "S2A_MSIL2A_20170617T113321_N9999_R080_T29UPU_13_55.npz", "sensor": "fused"}
+    plan = Plan.model_validate([{"id": "m1", "tool": "metadata", "parameters": {"aspect": "date"}}])
+    result, _trace = run(plan, metadata, mask=_water_mask())
+    assert result["m1"].detail["acquisition_date"] == "2017-06-17"
+
+
+def test_run_without_mask_raises_when_plan_needs_metadata():
+    plan = Plan.model_validate([{"id": "m1", "tool": "metadata", "parameters": {"aspect": "date"}}])
+    with pytest.raises(ExecutorError, match="metadata"):
+        run(plan, GSD_10M)
+
+
+def test_run_executes_conversational_tool_with_no_raster_at_all():
+    plan = Plan.model_validate([{"id": "c1", "tool": "conversational", "parameters": {"kind": "greeting"}}])
+    result, trace = run(plan, GSD_10M)  # no mask, no stack, no before/after -- none needed
+
+    assert isinstance(result["c1"], ConversationalReply)
+    assert result["c1"].kind == "greeting"
+
+    entry = trace.steps[0]
+    assert entry.tool == "conversational"
+    assert entry.confidence == pytest.approx(1.0)
+    assert entry.output["kind"] == "greeting"
+    assert entry.output["reply"] == result["c1"].reply
+
+
+def test_run_conversational_off_topic_kind():
+    plan = Plan.model_validate([{"id": "c1", "tool": "conversational", "parameters": {"kind": "off_topic"}}])
+    result, _trace = run(plan, GSD_10M)
+    assert result["c1"].kind == "off_topic"
 
 
 def test_run_is_replayable_without_the_llm():

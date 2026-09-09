@@ -110,6 +110,54 @@ export interface VerificationSummary {
   claims: VerificationClaim[];
 }
 
+export type FusionSourceName = "segmentation" | "classification" | "spectral_index" | "sar";
+
+export interface FusionSourceEvidence {
+  source: FusionSourceName;
+  available: boolean;
+  present: boolean | null;
+  confidence: number | null;
+  weight: number;
+  detail: string;
+}
+
+// Not a top-level API response -- this is the shape of a TraceStep's
+// `output` whenever `step.tool === "fusion"` (evidence/fusion.py's
+// FusionResult, as summarized by agent/executor.py's _summarize()).
+export interface FusionSummary {
+  class_id: number | number[];
+  class_name: string;
+  fused_present: boolean;
+  fused_confidence: number;
+  agreement: Record<string, boolean | null>;
+  agreement_fraction: number;
+  correlated_sources: FusionSourceName[];
+  weighting_note: string;
+  summary: string;
+  sources: FusionSourceEvidence[];
+}
+
+export type ConversationalKind = "greeting" | "off_topic";
+
+// Not a top-level API response -- this is the shape of a TraceStep's
+// `output` whenever `step.tool === "conversational"` (tools/conversational.py's
+// ConversationalReply, as summarized by agent/executor.py's _summarize()).
+export interface ConversationalSummary {
+  kind: ConversationalKind;
+  reply: string;
+}
+
+export type MetadataAspect = "location" | "date" | "sensor" | "resolution" | "classes";
+
+// Not a top-level API response -- this is the shape of a TraceStep's
+// `output` whenever `step.tool === "metadata"` (evidence/metadata.py's
+// MetadataResult, as summarized by agent/executor.py's _summarize()).
+export interface MetadataSummary {
+  aspect: MetadataAspect;
+  answer_text: string;
+  detail: Record<string, unknown>;
+}
+
 export interface SourceConfidence {
   source: string;
   confidence: number;

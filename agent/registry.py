@@ -161,6 +161,29 @@ REGISTRY: dict[str, Tool] = {
             "against the mask, per CLAUDE.md's 'No pixel, no claim'.",
             "both", (1.0, 60.0), 1, {"answer": str},
         ),
+        _tool(
+            "fusion",
+            "Independently checks whether a class is present via four "
+            "separate sources -- the segmentation head, the classification "
+            "head, a real spectral index (NDWI/NDBI/NDVI), and the SAR "
+            "branch where real SAR is available -- and reports per-source "
+            "agreement plus a weighted fused verdict.",
+            "both", (1.0, 60.0), 16, {"class_id": CLASS_ID},
+        ),
+        _tool(
+            "metadata",
+            "Answers a factual question about the scene's own record -- "
+            "location, acquisition date, sensor/platform, resolution, or "
+            "which classes are present -- read from the record, never "
+            "asked of an LLM.",
+            "both", (1.0, 60.0), 1, {"aspect": str},
+        ),
+        _tool(
+            "conversational",
+            "A short, scoped canned reply for a greeting or an off-topic "
+            "question -- not a general chatbot, never asked of an LLM.",
+            "both", (1.0, 60.0), 1, {"kind": str},
+        ),
     ]
 }
 

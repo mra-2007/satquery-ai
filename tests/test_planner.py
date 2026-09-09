@@ -168,14 +168,71 @@ def test_resolve_class_matches_a_paraphrase_via_shared_prefix():
     assert planner._resolve_class("there any built-up area", scene) == 3
 
 
-def test_fallback_unparseable_query_raises():
-    with pytest.raises(PlannerError):
-        planner._keyword_fallback("What is the meaning of life?", TEST_SCENE)
+def test_fallback_unparseable_query_is_a_conversational_off_topic_reply():
+    # Previously raised PlannerError (surfaced as a 422 in api/main.py) --
+    # per this feature's own requirement, an off-topic/unparseable query
+    # now gets a scoped conversational reply instead of an error.
+    plan = planner._keyword_fallback("What is the meaning of life?", TEST_SCENE)
+    assert plan[0].tool == "conversational"
+    assert plan[0].parameters == {"kind": "off_topic"}
 
 
 def test_fallback_unknown_class_raises():
+    # Unlike a fully unparseable query, this DID match a recognized
+    # pattern (count) -- only the specific noun failed to resolve to a
+    # known class -- so it still raises, not a conversational reply.
     with pytest.raises(PlannerError):
         planner._keyword_fallback("How many volcanoes are there?", TEST_SCENE)
+
+
+# --- greetings and metadata questions ------------------------------------------
+
+
+def test_fallback_greeting_maps_to_the_parameterless_conversational_tool():
+    plan = planner._keyword_fallback("Hi there!", TEST_SCENE)
+    assert plan[0].tool == "conversational"
+    assert plan[0].parameters == {"kind": "greeting"}
+
+
+@pytest.mark.parametrize("greeting", ["hi", "hello", "hey", "good morning", "howdy there"])
+def test_fallback_recognizes_common_greetings(greeting):
+    plan = planner._keyword_fallback(greeting, TEST_SCENE)
+    assert plan[0].tool == "conversational"
+    assert plan[0].parameters == {"kind": "greeting"}
+
+
+@pytest.mark.parametrize("query,expected_aspect", [
+    ("Where is this?", "location"),
+    ("Where is this scene located?", "location"),
+    ("When was this taken?", "date"),
+    ("What is the acquisition date?", "date"),
+    ("What sensor is this?", "sensor"),
+    ("What platform captured this?", "sensor"),
+    ("What resolution is this?", "resolution"),
+    ("What is the ground sample distance?", "resolution"),
+    ("What's in this scene?", "classes"),
+    ("What is in this scene?", "classes"),
+])
+def test_fallback_metadata_questions_map_to_the_right_aspect(query, expected_aspect):
+    plan = planner._keyword_fallback(query, TEST_SCENE)
+    assert plan[0].tool == "metadata"
+    assert plan[0].parameters == {"aspect": expected_aspect}
+
+
+def test_fallback_where_is_this_does_not_fall_through_to_grounding():
+    plan = planner._keyword_fallback("Where is this?", TEST_SCENE)
+    assert plan[0].tool == "metadata"
+
+
+def test_fallback_where_is_the_x_does_not_match_the_metadata_location_pattern():
+    # "the water body" is not "this" -- must not be swallowed by the
+    # metadata location pattern above it. (Offline grounding itself isn't
+    # keyword-fallback-parseable at all -- a pre-existing gap, unrelated to
+    # this feature -- so this still ends up a conversational off-topic
+    # reply rather than a "ground" plan; the point of this test is only
+    # that it ISN'T misrouted to "metadata".)
+    plan = planner._keyword_fallback("Where is the water body?", TEST_SCENE)
+    assert plan[0].tool != "metadata"
 
 
 # --- plan_from_query: cache, retries, fallback --------------------------------
