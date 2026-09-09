@@ -98,6 +98,85 @@ def test_build_geometry_metadata_falls_back_to_the_whole_scene():
     assert geometry.features[0].properties == {"note": "whole scene extent"}
 
 
+# --- intersect: "how much cropland is flooded?" -----------------------------
+
+
+def _intersect_trace_step(value: float = 0.03) -> TraceStep:
+    return TraceStep(
+        task="execute:i1", tool="intersect", parameters={"class_a": 0, "class_b": 1},
+        output=value, confidence=1.0,
+    )
+
+
+def test_build_answer_intersect_value_is_the_hectare_float():
+    value, units, answer_text, limitation = build_answer([_intersect_trace_step(0.03)], CLASSES)
+    assert value == 0.03
+    assert units == "hectares"
+    assert limitation is None
+    assert not str(answer_text).startswith("{")
+
+
+def test_build_answer_intersect_text_names_both_classes():
+    _value, _units, answer_text, _limitation = build_answer([_intersect_trace_step(0.03)], CLASSES)
+    assert answer_text == "0.03 ha of urban fabric is now inland waters"
+
+
+def test_build_geometry_intersect_falls_back_to_the_whole_scene():
+    # No before raster reaches this function -- only the whole-scene extent
+    # is available, same as 'change'.
+    mask = _water_mask()
+    geometry = build_geometry(mask, CLASSES, _intersect_trace_step())
+    assert geometry.type == "FeatureCollection"
+    assert geometry.features[0].properties == {"note": "whole scene extent"}
+
+
+# --- change with a class_id focus: "how much land changed to water?" -------
+
+
+def _focused_change_trace_step(focus_gained_ha: float = 0.05) -> TraceStep:
+    return TraceStep(
+        task="execute:c1", tool="change", parameters={"class_id": 1},
+        output={
+            "changed_pixels": 5,
+            "area_changes": {0: {"gained_ha": 0.0, "lost_ha": 0.05}, 1: {"gained_ha": 0.05, "lost_ha": 0.0}},
+            "summary": "Inland waters gained 0.05 ha and lost 0.00 ha (net +0.05 ha).",
+            "focus_class_id": 1,
+            "focus_gained_ha": focus_gained_ha,
+        },
+        confidence=1.0,
+    )
+
+
+def _unfocused_change_trace_step() -> TraceStep:
+    return TraceStep(
+        task="execute:c1", tool="change", parameters={},
+        output={
+            "changed_pixels": 5,
+            "area_changes": {0: {"gained_ha": 0.0, "lost_ha": 0.05}, 1: {"gained_ha": 0.05, "lost_ha": 0.0}},
+            "summary": "Inland waters gained 0.05 ha and lost 0.00 ha (net +0.05 ha).",
+            "focus_class_id": None,
+            "focus_gained_ha": None,
+        },
+        confidence=1.0,
+    )
+
+
+def test_build_answer_focused_change_value_is_the_focus_gained_hectares():
+    value, units, answer_text, limitation = build_answer([_focused_change_trace_step(0.05)], CLASSES)
+    assert value == 0.05
+    assert units == "hectares"
+    assert limitation is None
+    assert "0.05 ha changed to inland waters" in answer_text
+
+
+def test_build_answer_unfocused_change_still_returns_the_plain_summary():
+    value, units, answer_text, limitation = build_answer([_unfocused_change_trace_step()], CLASSES)
+    assert value == "Inland waters gained 0.05 ha and lost 0.00 ha (net +0.05 ha)."
+    assert answer_text == value
+    assert units is None
+    assert limitation is None
+
+
 def _conversational_trace_step(kind: str = "greeting") -> TraceStep:
     return TraceStep(
         task="execute:c1", tool="conversational", parameters={"kind": kind},

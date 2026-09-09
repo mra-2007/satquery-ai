@@ -539,6 +539,53 @@ def test_change_phrased_queries_resolve_via_the_keyword_fallback(client):
         assert isinstance(r.json()["evidence"]["value"], str)
 
 
+# --- disaster-response phrasings: composition of existing tools, not new ----
+# capability -- run against the real, preloaded OSCD demo change scene
+# (api.scenes.ensure_demo_change_scene_loaded, asserted to exist in
+# test_list_scenes_returns_the_demo_patches above) so these exercise real
+# bi-temporal masks end to end, not synthetic noise.
+
+
+def test_disaster_response_phrased_queries_run_end_to_end(client):
+    demo_scene_id = next(s["id"] for s in client.get("/scenes").json() if s["kind"] == "change")
+
+    queries_and_units = [
+        ("How much cropland is flooded?", "hectares"),
+        ("How much area is under water?", "hectares"),
+        ("Which built-up areas are near flooding?", None),
+        ("How much land changed to water?", "hectares"),
+    ]
+    for query, expected_units in queries_and_units:
+        r = client.post("/query", json={"scene_id": demo_scene_id, "query": query})
+        assert r.status_code == 200, query
+        evidence = r.json()["evidence"]
+        assert evidence["units"] == expected_units
+        # every one of these ends in a real number or boolean, never a raw
+        # Python dict repr leaking through as the answer.
+        assert not str(evidence["value"]).startswith("{")
+
+
+def test_disaster_response_cropland_flooded_maps_to_the_intersect_tool(client):
+    demo_scene_id = next(s["id"] for s in client.get("/scenes").json() if s["kind"] == "change")
+    r = client.post("/query", json={"scene_id": demo_scene_id, "query": "How much cropland is flooded?"})
+    assert r.status_code == 200
+    trace = r.json()["evidence"]["execution_trace"]
+    final_step = next(step for step in reversed(trace) if step["task"].startswith("execute:"))
+    assert final_step["tool"] == "intersect"
+    assert isinstance(r.json()["evidence"]["value"], float)
+
+
+def test_disaster_response_land_changed_to_water_focuses_the_change_tool(client):
+    demo_scene_id = next(s["id"] for s in client.get("/scenes").json() if s["kind"] == "change")
+    r = client.post("/query", json={"scene_id": demo_scene_id, "query": "How much land changed to water?"})
+    assert r.status_code == 200
+    trace = r.json()["evidence"]["execution_trace"]
+    final_step = next(step for step in reversed(trace) if step["task"].startswith("execute:"))
+    assert final_step["tool"] == "change"
+    assert final_step["parameters"].get("class_id") is not None
+    assert isinstance(r.json()["evidence"]["value"], float)
+
+
 # --- GET /scenes/{id}/cross-modal, /cross-modal-mask -----------------------------
 
 

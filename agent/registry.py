@@ -136,8 +136,18 @@ REGISTRY: dict[str, Tool] = {
         ),
         _tool(
             "change",
-            "Per-class area gained/lost and a change mask between two dates.",
-            "both", (1.0, 60.0), 1, {},
+            "Per-class area gained/lost and a change mask between two dates. "
+            "An optional class_id focuses the answer on one class's own "
+            "gained area (e.g. 'how much land changed to water?').",
+            "both", (1.0, 60.0), 1, {"class_id": CLASS_ID},
+        ),
+        _tool(
+            "intersect",
+            "Area (hectares) where class_a in the before date overlaps "
+            "class_b in the after date, at the same pixels -- e.g. "
+            "cropland that is now water answers 'how much cropland is "
+            "flooded?'.",
+            "both", (1.0, 60.0), 1, {"class_a": CLASS_ID, "class_b": CLASS_ID},
         ),
         _tool(
             "caption",

@@ -129,7 +129,26 @@ def test_run_executes_change_tool():
         "changed_pixels": 3,
         "area_changes": result["c1"].area_changes,
         "summary": result["c1"].summary,
+        "focus_class_id": None,
+        "focus_gained_ha": None,
     }
+
+
+def test_run_executes_change_tool_with_class_id_focus():
+    # "how much land changed to water?" -- class_id is a plan parameter,
+    # filled in via fn(**step.parameters) on top of the before/after/
+    # metadata/class_names already bound by run() itself.
+    before, after = _before_after()
+    plan = Plan.model_validate([{"id": "c1", "tool": "change", "parameters": {"class_id": URBAN}}])
+
+    result, trace = run(plan, GSD_10M, before=before, after=after)
+
+    assert result["c1"].focus_class_id == URBAN
+    assert result["c1"].focus_gained_ha == pytest.approx(0.03)
+
+    entry = trace.steps[0]
+    assert entry.output["focus_class_id"] == URBAN
+    assert entry.output["focus_gained_ha"] == pytest.approx(0.03)
 
 
 def test_run_passes_classes_through_to_change_tool_summary():
@@ -160,6 +179,34 @@ def test_run_with_only_before_raises():
         run(plan, GSD_10M, before=before)
 
 
+# --- running evidence/ops.py's intersect_area, over before/after ------------
+
+
+def test_run_executes_intersect_tool():
+    # WATER in before that is URBAN in after -- 3 px, per _before_after().
+    before, after = _before_after()
+    plan = Plan.model_validate([
+        {"id": "i1", "tool": "intersect", "parameters": {"class_a": WATER, "class_b": URBAN}},
+    ])
+
+    result, trace = run(plan, GSD_10M, before=before, after=after)
+
+    assert result["i1"] == pytest.approx(0.03)  # 3 px * 100 m2 / 10_000
+
+    entry = trace.steps[0]
+    assert entry.tool == "intersect"
+    assert entry.task == "execute:i1"
+    assert entry.output == pytest.approx(0.03)  # scalar output passes through the summary unchanged
+
+
+def test_run_without_before_after_raises_when_plan_needs_intersect():
+    plan = Plan.model_validate([
+        {"id": "i1", "tool": "intersect", "parameters": {"class_a": WATER, "class_b": URBAN}},
+    ])
+    with pytest.raises(ExecutorError, match="before and after"):
+        run(plan, GSD_10M)
+
+
 # --- mixed plans, invalid plans, and replayability ---------------------------
 
 
@@ -185,7 +232,7 @@ def test_run_rejects_invalid_plan_before_touching_any_tool():
 
 def test_run_rejects_tool_with_no_backing_implementation():
     # 'segment' is a registered tool (agent/registry.py) but this executor
-    # only backs count/size/presence/adjacency/change/caption/ground.
+    # only backs count/size/presence/adjacency/change/intersect/caption/ground.
     plan = Plan.model_validate([{"id": "s1", "tool": "segment", "parameters": {}}])
     with pytest.raises(PlanValidationError, match="no implementation"):
         run(plan, GSD_10M, mask=_water_mask())

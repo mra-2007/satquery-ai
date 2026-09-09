@@ -62,6 +62,8 @@ def _summarize(output: Any) -> Any:
             "changed_pixels": int(output.mask.sum()),
             "area_changes": output.area_changes,
             "summary": output.summary,
+            "focus_class_id": output.focus_class_id,
+            "focus_gained_ha": output.focus_gained_ha,
         }
     if isinstance(output, caption_tool.CaptionResult):
         return {
@@ -166,7 +168,10 @@ def run(
 ) -> tuple[dict[str, Any], ExecutionTrace]:
     """Run every step of `plan` against evidence/ops.py
     (count/size/presence/adjacency, over `mask`), evidence/change.py
-    (change, over `before`/`after`), tools/caption.py and tools/grounding.py
+    (change, over `before`/`after`), evidence/ops.py's intersect_area
+    (intersect, also over `before`/`after` -- class_a is matched in
+    `before`, class_b in `after`, e.g. "how much cropland is flooded?"),
+    tools/caption.py and tools/grounding.py
     (caption/ground, over `mask`), tools/cross_modal.py (cross_modal,
     over the raw `stack` -- it segments internally, three ways, so it
     needs the model's full multi-channel input, not a pre-computed mask),
@@ -223,6 +228,18 @@ def run(
         # condition that already skips the capability guardrail above.
         tool_functions["change"] = functools.partial(
             change.detect_change, before, after, metadata, class_names=classes,
+        )
+
+    if "intersect" in needed_tools:
+        if before is None or after is None:
+            raise ExecutorError(
+                "plan uses the 'intersect' tool but before and after rasters were not both provided"
+            )
+        # class_a is matched against `before`, class_b against `after` --
+        # "how much cropland is flooded?" means cropland in the before
+        # date that becomes water in the after date, at the same pixels.
+        tool_functions["intersect"] = functools.partial(
+            ops.intersect_area, before, mask_b=after, metadata=metadata,
         )
 
     if "caption" in needed_tools:

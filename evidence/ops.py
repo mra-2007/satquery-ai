@@ -65,9 +65,36 @@ def size(mask: np.ndarray, class_id: ClassId, metadata: dict) -> float:
     return pixel_count * _pixel_area_m2(metadata) / 10_000.0
 
 
-def adjacency(mask: np.ndarray, class_a: ClassId, class_b: ClassId, distance_m: float, metadata: dict) -> bool:
-    """True iff any pixel of class_a lies within distance_m of a pixel of class_b."""
+def buffer(mask: np.ndarray, class_ids: ClassId, distance_m: float, metadata: dict) -> np.ndarray:
+    """Boolean raster, True within distance_m of any pixel of class_ids (a
+    dilation of class_mask by distance_m, rounded UP to whole pixels via
+    the raster's own GSD -- never hardcoded, per CLAUDE.md). A reusable
+    primitive: adjacency() below is exactly "does this buffer reach any
+    pixel of class_b", and any future "which built-up areas are within
+    N metres of water" style question can reuse it directly."""
     gsd = metadata["gsd_metres"]
     iterations = max(1, math.ceil(distance_m / gsd))
-    dilated_a = ndimage.binary_dilation(class_mask(mask, class_a), iterations=iterations)
-    return bool(np.any(dilated_a & class_mask(mask, class_b)))
+    return ndimage.binary_dilation(class_mask(mask, class_ids), iterations=iterations)
+
+
+def adjacency(mask: np.ndarray, class_a: ClassId, class_b: ClassId, distance_m: float, metadata: dict) -> bool:
+    """True iff any pixel of class_a lies within distance_m of a pixel of class_b."""
+    return bool(np.any(buffer(mask, class_a, distance_m, metadata) & class_mask(mask, class_b)))
+
+
+def intersect_area(
+    mask_a: np.ndarray, class_a: ClassId, mask_b: np.ndarray, class_b: ClassId, metadata: dict,
+) -> float:
+    """Total area (hectares) where mask_a matches class_a AND, at the SAME
+    pixel, mask_b matches class_b. mask_a and mask_b are typically two
+    dates of the same scene (e.g. a 'change' pair's before/after rasters:
+    before's cropland that is after's water answers "how much cropland is
+    now flooded") -- a single categorical raster has one class per pixel,
+    so intersecting two DIFFERENT classes within the same mask is always
+    empty by construction; this is only meaningful across two rasters.
+    """
+    if mask_a.shape != mask_b.shape:
+        raise ValueError(f"shape mismatch: mask_a={mask_a.shape} mask_b={mask_b.shape}")
+    intersection = class_mask(mask_a, class_a) & class_mask(mask_b, class_b)
+    pixel_count = int(np.sum(intersection))
+    return pixel_count * _pixel_area_m2(metadata) / 10_000.0

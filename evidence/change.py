@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from evidence.ops import ClassId, class_mask
+
 
 def _pixel_area_m2(metadata: dict) -> float:
     gsd = metadata["gsd_metres"]
@@ -35,6 +37,23 @@ def area_changes(before: np.ndarray, after: np.ndarray, metadata: dict) -> dict[
             "lost_ha": lost_px * pixel_area_ha,
         }
     return result
+
+
+def gained_area(before: np.ndarray, after: np.ndarray, class_id: ClassId, metadata: dict) -> float:
+    """Total area (hectares) that became class_id (or any class in a list
+    of ids -- e.g. "water" = Inland + Marine waters) between before and
+    after: pixels that were NOT any of class_id in `before` and ARE some
+    member of class_id in `after`. Union-aware like every other
+    evidence/ops.py tool: a pixel that changed from Inland waters to
+    Marine waters was already water, so "how much land changed to water"
+    must not count it -- summing each individual class's own gained_ha
+    from area_changes() would (that pixel is Marine's own "gained"), which
+    is why this is its own function rather than just adding up entries
+    from that dict."""
+    was_class = class_mask(before, class_id)
+    is_class = class_mask(after, class_id)
+    gained_px = int(np.sum(is_class & ~was_class))
+    return gained_px * _pixel_area_m2(metadata) / 10_000.0
 
 
 def summarize(
@@ -66,6 +85,13 @@ class ChangeReport:
     mask: np.ndarray
     area_changes: dict[int, dict[str, float]]
     summary: str
+    # Set only when detect_change() was called with a `class_id` focus
+    # (e.g. "how much land changed to water?") -- None otherwise. Kept
+    # alongside the always-computed, all-classes `area_changes` above
+    # rather than replacing it, so the full per-class breakdown is never
+    # lost just because one question asked about a specific class.
+    focus_class_id: ClassId | None = None
+    focus_gained_ha: float | None = None
 
 
 def detect_change(
@@ -73,11 +99,17 @@ def detect_change(
     after: np.ndarray,
     metadata: dict,
     class_names: dict[int, str] | None = None,
+    class_id: ClassId | None = None,
 ) -> ChangeReport:
-    """Full bi-temporal change report: change mask, per-class area deltas, and
-    a plain-English summary."""
+    """Full bi-temporal change report: change mask, per-class area deltas,
+    and a plain-English summary -- always computed, regardless of
+    `class_id`. When `class_id` is given (e.g. "how much land changed to
+    water?"), also computes that one class's own gained_area() as a
+    focused scalar answer, alongside the full report."""
     return ChangeReport(
         mask=change_mask(before, after),
         area_changes=area_changes(before, after, metadata),
         summary=summarize(before, after, metadata, class_names),
+        focus_class_id=class_id,
+        focus_gained_ha=gained_area(before, after, class_id, metadata) if class_id is not None else None,
     )

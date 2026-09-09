@@ -120,9 +120,18 @@ FEW_SHOT_EXAMPLES: list[dict] = [
      "plan": [{"id": "s1", "tool": "adjacency", "parameters": {"class_a": 4, "class_b": 2, "distance_m": 50}}]},
     {"question": "Is the urban area within 100 metres of a water body?",
      "plan": [{"id": "s1", "tool": "adjacency", "parameters": {"class_a": 3, "class_b": 1, "distance_m": 100}}]},
+    # disaster response: composition of the tools above, not new capability
+    {"question": "How much cropland is flooded?",
+     "plan": [{"id": "s1", "tool": "intersect", "parameters": {"class_a": 4, "class_b": 1}}]},
+    {"question": "How much area is under water?",
+     "plan": [{"id": "s1", "tool": "size", "parameters": {"class_id": 1}}]},
+    {"question": "Which built-up areas are near flooding?",
+     "plan": [{"id": "s1", "tool": "adjacency", "parameters": {"class_a": 3, "class_b": 1, "distance_m": 0}}]},
+    {"question": "How much land changed to water?",
+     "plan": [{"id": "s1", "tool": "change", "parameters": {"class_id": 1}}]},
 ]
 
-assert len(FEW_SHOT_EXAMPLES) == 15
+assert len(FEW_SHOT_EXAMPLES) == 19
 
 
 # --- Prompt construction -----------------------------------------------------
@@ -266,6 +275,19 @@ _PRESENCE_PRESENT_RE = re.compile(r"^is (?:there )?(?:any )?(?:a |an |the )?(.+?
 _PRESENCE_THERE_RE = re.compile(r"^is there (?:any )?(?:a |an |the )?(.+)$")
 _CONTAIN_RE = re.compile(r"^does (?:this|the) (?:scene|image|patch) contain (?:any )?(.+)$")
 
+# --- Disaster-response phrasing: composition of the existing tools above,
+# not new capability (see evidence/ops.py's intersect_area/buffer and
+# evidence/change.py's gained_area, all backed by existing masks). These
+# three are all more SPECIFIC than a generic check already below them in
+# this file's match order -- "how much land changed to water" contains the
+# word "changed" (matched by the broad _CHANGE_WORDS check) and "how much
+# cropland is flooded" would otherwise fall into the equally broad
+# _SIZE_HOW_MUCH_RE -- so each of these three MUST be checked before its
+# broader sibling, or it's silently shadowed by it.
+_CHANGE_GAINED_RE = re.compile(r"^how much (?:land |area )?(?:changed to|became|turned into) (.+?)$")
+_FLOODED_RE = re.compile(r"^how much (.+?) is flooded$")
+_ADJACENCY_WHICH_RE = re.compile(r"^which (.+?) (?:are|is) near (?:the |a |an |any )?(.+)$")
+
 
 def _resolve_class(phrase: str, scene: SceneDescriptor) -> int | list[int]:
     phrase = phrase.strip().lower()
@@ -347,6 +369,39 @@ def _keyword_fallback(query: str, scene: SceneDescriptor) -> Plan:
     # a cross-modal question.
     if any(word in q for word in _CROSS_MODAL_WORDS):
         return _fallback_plan("cross_modal", {})
+
+    # "how much land changed to water?" -- a FOCUSED change question (one
+    # class's own gained area), not the generic "what changed" below. Must
+    # be checked first: "changed" is itself one of _CHANGE_WORDS, so the
+    # broad check below would otherwise shadow this and drop the focus.
+    m = _CHANGE_GAINED_RE.match(q)
+    if m:
+        parameters = {"class_id": _resolve_class(m.group(1), scene)}
+        return _fallback_plan("change", parameters)
+
+    # "how much cropland is flooded?" -- cropland (in the before date)
+    # intersected with water (in the after date). Must be checked before
+    # _SIZE_HOW_MUCH_RE below, which would otherwise greedily match the
+    # whole "cropland is flooded" phrase as one (unresolvable) class.
+    m = _FLOODED_RE.match(q)
+    if m:
+        parameters = {
+            "class_a": _resolve_class(m.group(1), scene),
+            "class_b": _resolve_class("water", scene),
+        }
+        return _fallback_plan("intersect", parameters)
+
+    # "which built-up areas are near flooding?" -- adjacency, phrased as
+    # "which X are near Y" rather than the "is X near Y" the existing
+    # _ADJACENCY_NEAR_RE already covers.
+    m = _ADJACENCY_WHICH_RE.match(q)
+    if m:
+        parameters = {
+            "class_a": _resolve_class(m.group(1), scene),
+            "class_b": _resolve_class(m.group(2), scene),
+            "distance_m": 0.0,
+        }
+        return _fallback_plan("adjacency", parameters)
 
     # The 'change' tool (evidence/change.py) takes no parameters at all --
     # it always operates on whatever before/after rasters the executor was

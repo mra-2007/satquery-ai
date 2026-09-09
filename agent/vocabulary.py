@@ -128,8 +128,14 @@ NOUN_TO_CLASS: dict[str, str | list[str]] = {
     # --- Arable land / farmland ---
     "farmland": "Arable land",
     "arable land": "Arable land",
-    "cropland": "Arable land",
     "field": "Arable land",
+    # "cropland" is broader than "arable land" alone -- actively farmed
+    # cultivation of any of these three subtypes -- so it resolves to all
+    # of them, the same many-to-many pattern "forest"/"water" already use
+    # (see the module docstring): a scene that's cropland entirely of one
+    # subtype must not read as "no cropland" for a disaster-response
+    # question like "how much cropland is flooded?".
+    "cropland": ["Arable land", "Permanent crops", "Complex cultivation patterns"],
 
     # --- Permanent crops ---
     "permanent crop": "Permanent crops",
@@ -200,6 +206,16 @@ NOUN_TO_CLASS: dict[str, str | list[str]] = {
     "water": ["Inland waters", "Marine waters"],
     "water area": ["Inland waters", "Marine waters"],
     "water body": ["Inland waters", "Marine waters"],
+    # --- Flooding: disaster-response phrasing for the same water classes.
+    # "flooded"/"flooding" describe a STATE (land now covered by water),
+    # not a distinct land-cover class of their own -- this model has no
+    # dedicated flood class, so mapping them onto the real water classes
+    # is the honest, disclosed approximation, same as every other noun
+    # this vocabulary resolves to its closest real class (see the module
+    # docstring).
+    "flood": ["Inland waters", "Marine waters"],
+    "flooding": ["Inland waters", "Marine waters"],
+    "flooded": ["Inland waters", "Marine waters"],
     "lake": "Inland waters",
     "river": "Inland waters",
     "pond": "Inland waters",

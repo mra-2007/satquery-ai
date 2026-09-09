@@ -56,13 +56,13 @@ VALID_PLAN_JSON = json.dumps(
 # --- few-shot examples --------------------------------------------------------
 
 
-def test_fifteen_few_shot_examples():
-    assert len(FEW_SHOT_EXAMPLES) == 15
+def test_nineteen_few_shot_examples():
+    assert len(FEW_SHOT_EXAMPLES) == 19
 
 
-def test_few_shot_examples_cover_all_four_tools():
+def test_few_shot_examples_cover_all_six_tools():
     tools_used = {step["tool"] for ex in FEW_SHOT_EXAMPLES for step in ex["plan"]}
-    assert tools_used == {"presence", "count", "size", "adjacency"}
+    assert tools_used == {"presence", "count", "size", "adjacency", "intersect", "change"}
 
 
 def test_every_few_shot_plan_is_itself_valid():
@@ -161,6 +161,71 @@ def test_fallback_describe_query_maps_to_the_parameterless_caption_tool():
 def test_fallback_summarize_phrasing_also_maps_to_caption():
     plan = planner._keyword_fallback("Summarize what this image shows.", TEST_SCENE)
     assert plan[0].tool == "caption"
+
+
+# --- disaster-response phrasing -----------------------------------------------
+# TEST_SCENE's illustrative class 0 is literally named "land", which is
+# itself a substring of "cropland" -- _resolve_class's own substring check
+# would therefore misresolve "cropland" to class 0 before ever reaching
+# agent.vocabulary's synonym fallback. That's an artifact of TEST_SCENE's
+# made-up naming, not a disaster-response bug, so these use a scene built
+# from the REAL 19-class vocabulary instead (agent/vocabulary.py), the same
+# way a real deployment's SceneDescriptor.classes would look.
+
+REAL_SCENE = SceneDescriptor(
+    layers=["sentinel2_10m_rgb", "class_raster"],
+    classes={0: "Urban fabric", 2: "Arable land", 17: "Inland waters", 18: "Marine waters"},
+    sensor="sentinel-2",
+    gsd_metres=10.0,
+    bbox=(77.5, 12.9, 77.7, 13.1),
+)
+
+
+def test_fallback_how_much_cropland_is_flooded_maps_to_intersect():
+    plan = planner._keyword_fallback("How much cropland is flooded?", REAL_SCENE)
+    assert plan[0].tool == "intersect"
+    assert plan[0].parameters == {"class_a": [2], "class_b": [17, 18]}
+
+
+def test_fallback_how_much_cropland_is_flooded_is_not_shadowed_by_the_generic_size_pattern():
+    # Regression: _SIZE_HOW_MUCH_RE is broad enough to otherwise swallow
+    # this whole phrase as one unresolvable "cropland is flooded" noun.
+    plan = planner._keyword_fallback("How much cropland is flooded?", REAL_SCENE)
+    assert plan[0].tool != "size"
+
+
+def test_fallback_area_under_water_uses_the_existing_size_pattern():
+    # No new regex needed -- the existing "how much X" size fallback
+    # already resolves this via a plain substring match on "water".
+    plan = planner._keyword_fallback("How much area is under water?", TEST_SCENE)
+    assert plan[0].tool == "size"
+    assert plan[0].parameters == {"class_id": 1}
+
+
+def test_fallback_which_built_up_areas_are_near_flooding_maps_to_adjacency():
+    plan = planner._keyword_fallback("Which built-up areas are near flooding?", REAL_SCENE)
+    assert plan[0].tool == "adjacency"
+    assert plan[0].parameters == {"class_a": 0, "class_b": [17, 18], "distance_m": 0.0}
+
+
+def test_fallback_how_much_land_changed_to_water_maps_to_focused_change():
+    plan = planner._keyword_fallback("How much land changed to water?", REAL_SCENE)
+    assert plan[0].tool == "change"
+    assert plan[0].parameters == {"class_id": [17, 18]}
+
+
+def test_fallback_how_much_land_changed_to_water_is_not_shadowed_by_the_generic_change_words():
+    # Regression: "changed" is itself one of agent.tasks._CHANGE_WORDS, so
+    # the broad, parameterless change check would otherwise match first and
+    # drop the "to water" focus entirely.
+    plan = planner._keyword_fallback("How much land changed to water?", REAL_SCENE)
+    assert plan[0].parameters != {}
+
+
+def test_fallback_became_phrasing_also_maps_to_focused_change():
+    plan = planner._keyword_fallback("How much area became water?", REAL_SCENE)
+    assert plan[0].tool == "change"
+    assert plan[0].parameters == {"class_id": [17, 18]}
 
 
 def test_resolve_class_matches_a_paraphrase_via_shared_prefix():

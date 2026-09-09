@@ -161,3 +161,103 @@ def test_adjacency_with_list_class_ids_on_both_sides():
     mask = _two_blocks(gap_cols=0)  # WATER and URBAN touching directly
     assert ops.adjacency(mask, [WATER, FOREST], [URBAN], distance_m=0, metadata=GSD_10M) is True
     assert ops.adjacency(mask, [FOREST], [URBAN], distance_m=0, metadata=GSD_10M) is False
+
+
+# --- buffer: the dilation primitive adjacency() itself is built on -----------
+
+
+def test_buffer_at_zero_distance_still_grows_by_one_pixel_touching_semantics():
+    # matches adjacency()'s own pre-existing "touching counts as distance
+    # zero" behaviour (max(1, ...) iterations) -- buffer(distance_m=0) is
+    # a 1-pixel dilation, not a no-op identical to class_mask.
+    mask = _two_blocks(gap_cols=0)  # blocks already touch directly
+    buffered = ops.buffer(mask, WATER, distance_m=0, metadata=GSD_10M)
+    assert np.any(buffered & ops.class_mask(mask, URBAN))
+    assert not np.array_equal(buffered, ops.class_mask(mask, WATER))  # strictly larger than the raw mask
+
+
+def test_buffer_grows_by_whole_pixels_rounded_up():
+    mask = _two_blocks(gap_cols=2)  # nearest pixels 3 columns (30 m) apart
+    # 20 m -> ceil(20/10) = 2 px of growth -- not enough to bridge 3 columns
+    assert not np.any(ops.buffer(mask, WATER, distance_m=20, metadata=GSD_10M) & ops.class_mask(mask, URBAN))
+    # 30 m -> ceil(30/10) = 3 px of growth -- exactly enough
+    assert np.any(ops.buffer(mask, WATER, distance_m=30, metadata=GSD_10M) & ops.class_mask(mask, URBAN))
+
+
+def test_buffer_never_hardcodes_the_gsd():
+    mask = _two_blocks(gap_cols=2)  # a fixed 3-pixel gap, regardless of GSD
+    # 30 m at 10 m GSD -> 3 px of growth -- exactly enough to bridge the gap
+    assert np.any(ops.buffer(mask, WATER, distance_m=30, metadata=GSD_10M) & ops.class_mask(mask, URBAN))
+    # the SAME 30 m at 30 m GSD -> only 1 px of growth -- not enough for the
+    # same 3-pixel gap. Different answers from the same distance_m, purely
+    # because metadata['gsd_metres'] differs, proves the math reads it
+    # rather than assuming a fixed pixel step.
+    assert not np.any(ops.buffer(mask, WATER, distance_m=30, metadata=GSD_30M) & ops.class_mask(mask, URBAN))
+
+
+def test_adjacency_is_expressible_purely_via_buffer():
+    # documents the actual relationship: adjacency() is buffer() plus one
+    # intersection test, not independently-implemented dilation logic.
+    mask = _two_blocks(gap_cols=2)
+    for distance_m in (0, 20, 30, 1000):
+        expected = ops.adjacency(mask, WATER, URBAN, distance_m=distance_m, metadata=GSD_10M)
+        actual = bool(np.any(ops.buffer(mask, WATER, distance_m, GSD_10M) & ops.class_mask(mask, URBAN)))
+        assert actual == expected
+
+
+# --- intersect_area: cross-raster area, e.g. "how much cropland is flooded" --
+
+CROPLAND = FOREST  # reuse an existing id as a stand-in "cropland" class for these tests
+
+
+def test_intersect_area_counts_pixels_matching_both_masks():
+    before = np.full((10, 10), LAND, dtype=int)
+    before[0:4, 0:4] = CROPLAND  # 16 px cropland in the BEFORE date
+    after = np.full((10, 10), LAND, dtype=int)
+    after[0:2, 0:2] = WATER  # only the top-left 4 px of that area is now water
+
+    # 4 px * (10 m)^2 = 400 m2 = 0.04 ha
+    assert ops.intersect_area(before, CROPLAND, after, WATER, GSD_10M) == pytest.approx(0.04)
+
+
+def test_intersect_area_zero_when_regions_dont_overlap():
+    before = np.full((10, 10), LAND, dtype=int)
+    before[0:2, 0:2] = CROPLAND
+    after = np.full((10, 10), LAND, dtype=int)
+    after[8:10, 8:10] = WATER  # disjoint corner -- no pixel is both
+    assert ops.intersect_area(before, CROPLAND, after, WATER, GSD_10M) == 0.0
+
+
+def test_intersect_area_full_overlap_equals_the_smaller_regions_own_size():
+    before = np.full((10, 10), LAND, dtype=int)
+    before[0:5, 0:5] = CROPLAND  # 25 px
+    after = np.full((10, 10), LAND, dtype=int)
+    after[0:3, 0:3] = WATER  # 9 px, entirely inside the cropland footprint
+    assert ops.intersect_area(before, CROPLAND, after, WATER, GSD_10M) == pytest.approx(
+        ops.size(after, WATER, GSD_10M)
+    )
+
+
+def test_intersect_area_supports_list_class_ids_on_both_sides():
+    before = np.full((10, 10), LAND, dtype=int)
+    before[0:4, 0:4] = FOREST_B  # a different "cropland-ish" subtype
+    after = np.full((10, 10), LAND, dtype=int)
+    after[0:2, 0:2] = URBAN
+    assert ops.intersect_area(before, [CROPLAND, FOREST_B], after, [WATER, URBAN], GSD_10M) == pytest.approx(0.04)
+
+
+def test_intersect_area_reads_gsd_from_metadata_not_hardcoded():
+    before = np.full((4, 5), LAND, dtype=int)
+    before[0:2, 0:3] = CROPLAND  # 6 px
+    after = np.full((4, 5), LAND, dtype=int)
+    after[0:2, 0:3] = WATER  # same 6 px, full overlap
+
+    assert ops.intersect_area(before, CROPLAND, after, WATER, GSD_10M) == pytest.approx(0.06)
+    assert ops.intersect_area(before, CROPLAND, after, WATER, GSD_30M) == pytest.approx(0.54)
+
+
+def test_intersect_area_raises_on_shape_mismatch():
+    before = np.zeros((10, 10), dtype=int)
+    after = np.zeros((5, 5), dtype=int)
+    with pytest.raises(ValueError, match="shape mismatch"):
+        ops.intersect_area(before, CROPLAND, after, WATER, GSD_10M)

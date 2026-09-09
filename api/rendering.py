@@ -78,7 +78,12 @@ def build_geometry(mask: np.ndarray, classes: dict[int, str], final_step: TraceS
             Feature(geometry=Polygon.model_validate(polygon), properties={"class": output["class_name"]})
         ])
 
-    return _whole_scene_geometry(mask)  # caption, cross_modal, change
+    # caption, cross_modal, change, intersect: 'intersect' would need BOTH
+    # the before and after rasters to vectorize the true overlap region, but
+    # this function only receives the one `mask` the rest of these tools
+    # already share (the current/after mask) -- same reason 'change' itself
+    # falls back to the whole scene extent rather than a precise geometry.
+    return _whole_scene_geometry(mask)
 
 
 def _pluralize(class_name: str) -> str:
@@ -116,8 +121,28 @@ def build_answer(full_trace: list[TraceStep], classes: dict[int, str]):
     if tool == "ground":
         text = f"{output['class_name']} at pixel bbox {tuple(output['pixel_bbox'])}"
         return str(output["class_name"]), None, text, limitation
-    if tool in ("cross_modal", "change"):
+    if tool == "cross_modal":
         return str(output["summary"]), None, str(output["summary"]), limitation
+    if tool == "change":
+        # A focused change question ("how much land changed to water?")
+        # carries its own scalar answer alongside the full summary -- see
+        # evidence/change.py's ChangeReport.focus_gained_ha. An unfocused
+        # "what changed?" has no class_id parameter at all, so it keeps
+        # returning the plain-English summary as before.
+        if output.get("focus_gained_ha") is not None:
+            class_name = _class_label(classes, params["class_id"]).lower()
+            gained = output["focus_gained_ha"]
+            text = f"{gained:.2f} ha changed to {class_name}. {output['summary']}"
+            return float(gained), "hectares", text, limitation
+        return str(output["summary"]), None, str(output["summary"]), limitation
+    if tool == "intersect":
+        # "how much cropland is flooded?" -- class_a is matched in the
+        # before date, class_b in the after date, at the same pixels (see
+        # evidence/ops.py's intersect_area).
+        class_a_name = _class_label(classes, params["class_a"]).lower()
+        class_b_name = _class_label(classes, params["class_b"]).lower()
+        text = f"{output:.2f} ha of {class_a_name} is now {class_b_name}"
+        return float(output), "hectares", text, limitation
     if tool == "fusion":
         return bool(output["fused_present"]), None, str(output["summary"]), limitation
     if tool in ("metadata", "conversational"):

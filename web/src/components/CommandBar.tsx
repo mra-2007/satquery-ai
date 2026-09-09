@@ -11,7 +11,14 @@ export const ANALYZE_EXAMPLES = [
   "What's in this scene?",
 ];
 
-export const CHANGE_EXAMPLES = ["What changed between these dates?", "Has built-up area increased?"];
+export const CHANGE_EXAMPLES = [
+  "What changed between these dates?",
+  "Has built-up area increased?",
+  "How much cropland is flooded?",
+  "How much area is under water?",
+  "Which built-up areas are near flooding?",
+  "How much land changed to water?",
+];
 
 export const CROSS_MODAL_EXAMPLES = [
   "Does the SAR image confirm what the optical image shows?",

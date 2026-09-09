@@ -17,7 +17,7 @@ from agent.registry import (
 
 EXPECTED_TOOL_NAMES = {
     "segment", "count", "size", "presence", "adjacency", "change", "caption", "ground", "cross_modal",
-    "verify", "fusion", "metadata", "conversational",
+    "verify", "fusion", "metadata", "conversational", "intersect",
 }
 
 # 16 bands: enough for every registered tool, including cross_modal (which
@@ -182,6 +182,20 @@ def test_validate_parameters_fusion_accepts_class_id():
 
 def test_fusion_requires_the_models_full_16_channel_input():
     assert REGISTRY["fusion"].required_band_count == 16
+
+
+def test_validate_parameters_intersect_accepts_class_a_and_class_b():
+    validate_parameters(REGISTRY["intersect"], {"class_a": 1, "class_b": 2})  # no raise
+    validate_parameters(REGISTRY["intersect"], {"class_a": [1, 2], "class_b": 3})  # no raise -- generic-noun union
+    with pytest.raises(ParameterValidationError):
+        validate_parameters(REGISTRY["intersect"], {"class_a": 1, "class_b": 2, "bogus": True})
+
+
+def test_validate_parameters_change_accepts_optional_class_id():
+    validate_parameters(REGISTRY["change"], {})  # no raise -- class_id remains optional
+    validate_parameters(REGISTRY["change"], {"class_id": 1})  # no raise
+    with pytest.raises(ParameterValidationError):
+        validate_parameters(REGISTRY["change"], {"class_id": 1, "bogus": True})
 
 
 def test_validate_parameters_metadata_accepts_aspect():
