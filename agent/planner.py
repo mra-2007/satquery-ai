@@ -51,7 +51,11 @@ load_dotenv(ROOT_DIR / ".env")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") or None
 
 DEFAULT_CACHE_DIR = AGENT_DIR / ".cache" / "plans"
-GEMINI_MODEL = "gemini-2.5-flash"
+# NOT "gemini-2.5-flash" -- see agent/tasks.py's own GEMINI_MODEL comment:
+# that model id now 404s for this API key, which meant plan_from_query()
+# was silently falling straight through to the keyword-fallback parser on
+# every live call rather than ever actually asking Gemini for a plan.
+GEMINI_MODEL = "gemini-flash-lite-latest"
 MAX_RETRIES = 3
 DEFAULT_MIN_AREA_M2 = 0.0
 

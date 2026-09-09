@@ -42,7 +42,11 @@ ROOT_DIR = TOOLS_DIR.parent
 
 load_dotenv(ROOT_DIR / ".env")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") or None
-GEMINI_MODEL = "gemini-2.5-flash"
+# NOT "gemini-2.5-flash" -- see agent/tasks.py's own GEMINI_MODEL comment:
+# that model id now 404s for this API key, which meant caption()'s
+# Gemini-smoothing step was silently falling straight through to
+# render_template()'s deterministic sentence, unsmoothed, on every live call.
+GEMINI_MODEL = "gemini-flash-lite-latest"
 
 
 @dataclass

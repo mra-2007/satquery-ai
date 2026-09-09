@@ -47,7 +47,17 @@ load_dotenv(ROOT_DIR / ".env")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") or None
 
 DEFAULT_CACHE_DIR = AGENT_DIR / ".cache" / "tasks"
-GEMINI_MODEL = "gemini-2.5-flash"
+# NOT "gemini-2.5-flash" -- that model id now 404s for this API key ("no
+# longer available to new users"), which meant classify_task() was
+# silently hitting the except-and-fall-back-to-keyword-parser path on
+# every live call, never actually reaching Gemini. gemini-flash-lite-
+# latest is confirmed working (including with response_mime_type=
+# "application/json", the mode this module needs) and, unlike the API
+# error's own suggested replacement (gemini-3.6-flash, capped at a mere
+# 20 requests/day on the free tier -- see eval/run_vlm_baseline.py's own
+# docstring for how that was discovered), has enough free-tier headroom
+# for real use.
+GEMINI_MODEL = "gemini-flash-lite-latest"
 
 TASK_LABELS = (
     "vqa", "caption", "grounding", "change_vqa", "change_describe", "cross_modal",
