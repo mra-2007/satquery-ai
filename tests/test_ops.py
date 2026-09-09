@@ -106,3 +106,58 @@ def test_adjacency_true_when_distance_covers_gap():
 def test_adjacency_false_for_unrelated_classes():
     mask = _two_blocks(gap_cols=0)
     assert ops.adjacency(mask, WATER, FOREST, distance_m=1000, metadata=GSD_10M) is False
+
+
+# --- class_id as a list -- agent.vocabulary.resolve_noun's many-to-many case -
+
+FOREST_B = 4  # a second, distinct "forest-like" class id, alongside FOREST=3
+
+
+def _two_forest_subtypes_touching() -> np.ndarray:
+    """A single visually-contiguous 4x2 forest patch made of TWO different
+    raw classes (FOREST and FOREST_B) side by side -- the exact shape of
+    the real bug: a scene whose forest happens to be entirely one raw
+    subtype must not read as "no forest" just because a different generic
+    "forest" mapping picked the other subtype."""
+    mask = np.full((10, 10), LAND, dtype=int)
+    mask[2:6, 2:4] = FOREST     # left half of the patch
+    mask[2:6, 4:6] = FOREST_B   # right half of the patch, touching the first
+    return mask
+
+
+def test_size_with_a_list_sums_every_class_in_it():
+    mask = _two_forest_subtypes_touching()
+    assert ops.size(mask, [FOREST, FOREST_B], metadata=GSD_10M) == pytest.approx(0.16)  # 16 px total
+
+
+def test_size_with_a_list_is_nonzero_even_if_only_one_member_class_is_present():
+    # The exact reported bug: resolve_noun("forest") used to pick ONE
+    # representative class; if a scene had none of THAT class, size()
+    # answered 0 even with plenty of a sibling forest class on screen.
+    mask = np.full((10, 10), LAND, dtype=int)
+    mask[2:6, 2:6] = FOREST  # only FOREST present, zero pixels of FOREST_B
+    assert ops.size(mask, [FOREST, FOREST_B], metadata=GSD_10M) == pytest.approx(0.16)
+
+
+def test_count_unions_before_labeling_not_after():
+    # FOREST and FOREST_B touch, forming ONE connected patch. Counting
+    # each raw class separately and summing would say "2"; unioned first,
+    # it's correctly "1".
+    mask = _two_forest_subtypes_touching()
+    assert ops.count(mask, [FOREST, FOREST_B], min_area_m2=0, metadata=GSD_10M) == 1
+    # proof the two are genuinely different raw classes, not a typo:
+    assert ops.count(mask, FOREST, min_area_m2=0, metadata=GSD_10M) == 1
+    assert ops.count(mask, FOREST_B, min_area_m2=0, metadata=GSD_10M) == 1
+
+
+def test_presence_with_a_list():
+    mask = np.full((10, 10), LAND, dtype=int)
+    mask[2:4, 2:4] = FOREST_B
+    assert ops.presence(mask, [FOREST, FOREST_B], min_area_m2=0, metadata=GSD_10M) is True
+    assert ops.presence(mask, [FOREST], min_area_m2=1_000_000, metadata=GSD_10M) is False
+
+
+def test_adjacency_with_list_class_ids_on_both_sides():
+    mask = _two_blocks(gap_cols=0)  # WATER and URBAN touching directly
+    assert ops.adjacency(mask, [WATER, FOREST], [URBAN], distance_m=0, metadata=GSD_10M) is True
+    assert ops.adjacency(mask, [FOREST], [URBAN], distance_m=0, metadata=GSD_10M) is False

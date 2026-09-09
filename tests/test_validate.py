@@ -94,6 +94,33 @@ def test_mismatched_crs_rejected():
     assert "different CRS" in result.reason
 
 
+def test_require_matching_crs_false_skips_the_crs_check_entirely():
+    # both missing CRS (typical for two plain PNG/JPEG uploads) -- would
+    # normally be a hard rejection; opting out relies on phase correlation
+    # itself as the alignment check instead.
+    a = _image("a.tif", crs=None, size=32)
+    b = _image("b.tif", crs=None, size=32, data=a.data.copy())
+    result = validate_images(
+        [ImageInput(a, "optical"), ImageInput(b, "sar")], require_matching_crs=False,
+    )
+    assert result.ok is True
+    assert result.fallback_single_modality is False
+
+
+def test_require_matching_crs_false_still_runs_coregistration():
+    a = _image("a.tif", crs=None, size=64)
+    from scipy.ndimage import shift as _shift
+    shifted = _shift(a.data[0].astype(float), (2.0, -1.0), mode="reflect")
+    b = _image("b.tif", crs=None, size=64, data=shifted[None, :, :].astype("uint8"))
+
+    result = validate_images(
+        [ImageInput(a, "optical"), ImageInput(b, "sar")], require_matching_crs=False,
+    )
+    assert result.ok is True
+    assert result.auto_shifted is True
+    assert result.shift_px is not None
+
+
 def test_missing_crs_on_one_of_a_pair_rejected():
     a = _image("a.tif", crs="EPSG:32643", size=32)
     b = _image("b.tif", crs=None, size=32)

@@ -17,6 +17,7 @@ from agent.registry import (
 
 EXPECTED_TOOL_NAMES = {
     "segment", "count", "size", "presence", "adjacency", "change", "caption", "ground", "cross_modal",
+    "verify",
 }
 
 # 16 bands: enough for every registered tool, including cross_modal (which
@@ -29,7 +30,7 @@ SENTINEL1_SAR = {"gsd_metres": 10.0, "modality": "sar", "band_count": 2}
 # --- Tool dataclass and registration -----------------------------------------
 
 
-def test_registry_has_exactly_the_nine_required_tools():
+def test_registry_has_exactly_the_ten_required_tools():
     assert set(REGISTRY) == EXPECTED_TOOL_NAMES
 
 

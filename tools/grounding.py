@@ -47,6 +47,7 @@ from scipy import ndimage
 from shapely.geometry import shape as shapely_shape
 
 from agent.vocabulary import SEGMENTATION_CLASSES, resolve_noun
+from evidence.ops import class_mask
 from evidence.schema import Polygon
 
 _CLASS_NAME_TO_ID = {name: i for i, name in enumerate(SEGMENTATION_CLASSES)}
@@ -59,8 +60,8 @@ class GroundingError(ValueError):
 
 @dataclass
 class GroundingResult:
-    class_id: int
-    class_name: str
+    class_id: int | list[int]  # a list when the query's noun (e.g. "forest") spans several real classes
+    class_name: str  # "Broad-leaved forest / Coniferous forest / Mixed forest" for a multi-class match
     area_ha: float
     candidate_count: int  # how many regions of this class existed to choose from
     qualifier: dict[str, str | None]  # {"direction": ..., "superlative": ...} as parsed from the query
@@ -122,8 +123,13 @@ def _pixel_area_ha(mask: np.ndarray, metadata: dict) -> float:
     return (gsd * gsd) / 10_000.0
 
 
-def _regions_for_class(mask: np.ndarray, class_id: int) -> list[np.ndarray]:
-    labeled, n_components = ndimage.label(mask == class_id)
+def _regions_for_class(mask: np.ndarray, class_id: int | list[int]) -> list[np.ndarray]:
+    """Connected components of `class_id` -- a single class, or the union
+    of every class in a list (evidence.ops.class_mask), unioned BEFORE
+    labeling so e.g. adjacent Broad-leaved and Coniferous forest pixels
+    that together form one visible patch aren't split into two "forest"
+    regions just because they're different raw classes."""
+    labeled, n_components = ndimage.label(class_mask(mask, class_id))
     return [labeled == label_id for label_id in range(1, n_components + 1)]
 
 
@@ -218,10 +224,13 @@ def ground(mask: np.ndarray, metadata: dict, query: str) -> GroundingResult:
     """
     remaining_text, direction_vector, superlative = _parse_qualifiers(query)
 
-    class_name = resolve_noun(remaining_text)
-    if class_name is None:
+    resolved = resolve_noun(remaining_text)
+    if resolved is None:
         raise GroundingError(f"could not resolve a class from {query!r}")
-    class_id = _CLASS_NAME_TO_ID[class_name]
+    resolved_names = resolved if isinstance(resolved, list) else [resolved]
+    resolved_ids = [_CLASS_NAME_TO_ID[name] for name in resolved_names]
+    class_id: int | list[int] = resolved_ids if isinstance(resolved, list) else resolved_ids[0]
+    class_name = " / ".join(resolved_names)
 
     regions = _regions_for_class(mask, class_id)
     if not regions:

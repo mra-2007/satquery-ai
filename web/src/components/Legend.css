@@ -1,0 +1,47 @@
+.legend {
+  position: absolute;
+  left: var(--space-4);
+  top: 100px; /* clears the top bar (56px) plus room for a possible warning banner (34px) */
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(8px);
+  min-width: 176px;
+  animation: stagger-in var(--duration-base) var(--ease-out);
+}
+
+.legend__title {
+  margin-bottom: 2px;
+}
+
+.legend__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.legend__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend__swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend__name {
+  font-size: 12px;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

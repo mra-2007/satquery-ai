@@ -9,9 +9,11 @@ in .env, and a test suite must never depend on a live network call."""
 
 import io
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from scipy.ndimage import shift as ndi_shift
 
 from agent import planner, tasks
 from api.main import app
@@ -36,19 +38,99 @@ def _png_bytes(width=32, height=32) -> bytes:
     return buffer.getvalue()
 
 
+def _grayscale_png_bytes(width=64, height=64, seed=0, array: np.ndarray | None = None) -> bytes:
+    if array is None:
+        array = np.random.default_rng(seed).random((height, width)) * 255
+    image = Image.fromarray(array.astype(np.uint8), mode="L")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _shifted_grayscale_pair(shift_px, width=64, height=64, seed=0) -> tuple[bytes, bytes]:
+    """(base_png, shifted_png) -- a real, known sub/super-pixel shift
+    between the two, for exercising phase_cross_correlation."""
+    base = np.random.default_rng(seed).random((height, width)) * 255
+    shifted = ndi_shift(base, shift_px, mode="reflect")
+    return _grayscale_png_bytes(array=base), _grayscale_png_bytes(array=shifted)
+
+
 # --- GET /scenes --------------------------------------------------------------
 
 
 def test_list_scenes_returns_the_demo_patches(client):
+    # GET /scenes now also lists any scene ever /upload-ed (the whole
+    # point of this task), so scope to source="demo" rather than assuming
+    # /scenes returns exactly the demo patches and nothing else. Startup
+    # also seeds one demo 'change' pair from data/oscd/ (see
+    # api.scenes.ensure_demo_change_scene_loaded) alongside the 15
+    # data/demo_patches/*.npz scenes, so demo scenes now split into two
+    # distinct kinds/shapes -- checked separately below.
     response = client.get("/scenes")
     assert response.status_code == 200
-    scenes = response.json()
-    assert len(scenes) == 9  # data/demo_patches/*.npz
-    for scene in scenes:
+    demo_scenes = [s for s in response.json() if s["source"] == "demo"]
+    assert len(demo_scenes) == 16  # 15 data/demo_patches/*.npz + 1 seeded OSCD change pair
+
+    patch_scenes = [s for s in demo_scenes if s["kind"] == "single"]
+    assert len(patch_scenes) == 15
+    for scene in patch_scenes:
         assert scene["sensor"] == "fused"
         assert scene["gsd_metres"] == 10.0
         assert scene["width"] == 120 and scene["height"] == 120
         assert scene["id"] and scene["filename"].endswith(".npz")
+
+    change_scenes = [s for s in demo_scenes if s["kind"] == "change"]
+    assert len(change_scenes) == 1
+    assert change_scenes[0]["sensor"] == "optical"
+    assert change_scenes[0]["gsd_metres"] == 10.0
+
+
+# --- GET /scenes/{id}/image, /mask, /legend --------------------------------------
+
+
+def test_scene_image_is_a_real_png(client):
+    scene_id = client.get("/scenes").json()[0]["id"]
+    response = client.get(f"/scenes/{scene_id}/image")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content[:8] == b"\x89PNG\r\n\x1a\n"  # real PNG magic bytes, not a stub
+
+
+def test_scene_mask_is_a_real_png(client):
+    scene_id = client.get("/scenes").json()[0]["id"]
+    response = client.get(f"/scenes/{scene_id}/mask")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_scene_legend_only_lists_classes_actually_present(client):
+    scene_id = client.get("/scenes").json()[0]["id"]
+    legend = client.get(f"/scenes/{scene_id}/legend").json()
+    assert len(legend) > 0
+    for entry in legend:
+        assert set(entry) == {"class_id", "class_name", "color"}
+        assert entry["color"].startswith("#") and len(entry["color"]) == 7
+
+
+def test_scene_legend_is_sorted_by_area_descending(client):
+    scene_id = client.get("/scenes").json()[0]["id"]
+    legend = client.get(f"/scenes/{scene_id}/legend").json()
+    # the dominant class in this specific demo patch, verified against
+    # the mask directly -- not just "some order", the ACTUAL order
+    import numpy as np
+    from api.database import get_connection
+    conn = get_connection()
+    row = conn.execute("SELECT mask_path FROM scenes WHERE id = ?", (scene_id,)).fetchone()
+    conn.close()
+    mask = np.load(row["mask_path"])
+    ids, counts = np.unique(mask, return_counts=True)
+    expected_order = [int(i) for i in ids[np.argsort(counts)[::-1]]]
+    assert [entry["class_id"] for entry in legend] == expected_order
+
+
+def test_unknown_scene_image_returns_404(client):
+    assert client.get("/scenes/does-not-exist/image").status_code == 404
 
 
 # --- POST /query ----------------------------------------------------------------
@@ -151,6 +233,35 @@ def test_upload_valid_png_with_gsd_override_passes_validation(client):
     assert body["width"] == 32 and body["height"] == 32
 
 
+def test_upload_registers_a_scene_ready_for_the_full_pipeline(client):
+    response = client.post(
+        "/upload",
+        files={"file": ("scene2.png", _png_bytes(), "image/png")},
+        data={"modality": "optical", "gsd_metres": "10.0"},
+    )
+    body = response.json()
+    assert body["ok"] is True
+    assert body["kind"] == "single"
+    assert body["scene_id"] is not None
+
+    # the 3-band -> 16-channel gap must be disclosed, not hidden
+    assert len(body["warnings"]) >= 1
+    assert any("16" in w for w in body["warnings"])
+
+    # it must appear in GET /scenes with the same warnings...
+    scenes = {s["id"]: s for s in client.get("/scenes").json()}
+    assert body["scene_id"] in scenes
+    assert scenes[body["scene_id"]]["source"] == "upload"
+    assert scenes[body["scene_id"]]["warnings"] == body["warnings"]
+
+    # ...and be immediately queryable, end to end
+    query_response = client.post(
+        "/query", json={"scene_id": body["scene_id"], "query": "How many water bodies are there?"}
+    )
+    assert query_response.status_code == 200
+    assert query_response.json()["scene_id"] == body["scene_id"]
+
+
 def test_upload_png_without_gsd_override_fails_validation(client):
     # raster_io/validate.py refuses rather than defaulting a GSD.
     response = client.post(
@@ -174,3 +285,213 @@ def test_upload_unsupported_format_fails_validation(client):
     body = response.json()
     assert body["ok"] is False
     assert "unsupported format" in body["reason"]
+
+
+# --- POST /upload: pairs ---------------------------------------------------------
+
+
+def test_pair_upload_without_pair_kind_is_rejected(client):
+    optical, sar = _shifted_grayscale_pair((0.0, 0.0))
+    response = client.post(
+        "/upload",
+        files={"file": ("a.png", optical, "image/png"), "file2": ("b.png", sar, "image/png")},
+        data={"modality": "optical", "gsd_metres": "10.0", "modality2": "sar", "gsd_metres2": "10.0"},
+    )
+    body = response.json()
+    assert body["ok"] is False
+    assert "pair_kind" in body["reason"]
+
+
+def test_cross_modal_pair_requires_one_optical_and_one_sar(client):
+    optical_a, optical_b = _shifted_grayscale_pair((0.0, 0.0))
+    response = client.post(
+        "/upload",
+        files={"file": ("a.png", optical_a, "image/png"), "file2": ("b.png", optical_b, "image/png")},
+        data={
+            "modality": "optical", "gsd_metres": "10.0", "modality2": "optical", "gsd_metres2": "10.0",
+            "pair_kind": "cross_modal",
+        },
+    )
+    body = response.json()
+    assert body["ok"] is False
+    assert "optical" in body["reason"] and "sar" in body["reason"]
+
+
+def test_cross_modal_pair_upload_registers_a_fused_scene(client):
+    optical, sar = _shifted_grayscale_pair((0.0, 0.0))  # perfectly aligned -- no fallback expected
+    response = client.post(
+        "/upload",
+        files={"file": ("opt.png", optical, "image/png"), "file2": ("sar.png", sar, "image/png")},
+        data={
+            "modality": "optical", "gsd_metres": "10.0", "modality2": "sar", "gsd_metres2": "10.0",
+            "pair_kind": "cross_modal",
+        },
+    )
+    body = response.json()
+    assert body["ok"] is True
+    assert body["kind"] == "cross_modal"
+    assert body["fallback_single_modality"] is False
+    assert body["scene_id"] is not None
+    # SAR-channel honesty caveat must be present alongside the RGB one
+    assert any("SAR" in w for w in body["warnings"])
+
+    scene = next(s for s in client.get("/scenes").json() if s["id"] == body["scene_id"])
+    assert scene["sensor"] == "fused"
+    assert scene["kind"] == "cross_modal"
+
+    # queryable like any other scene
+    query_response = client.post(
+        "/query", json={"scene_id": body["scene_id"], "query": "How many water bodies are there?"}
+    )
+    assert query_response.status_code == 200
+
+
+def test_change_pair_upload_registers_a_change_scene_queryable_on_after_state(client):
+    before, after = _shifted_grayscale_pair((0.0, 0.0), seed=3)  # identical content, aligned
+    response = client.post(
+        "/upload",
+        files={"file": ("before.png", before, "image/png"), "file2": ("after.png", after, "image/png")},
+        data={
+            "modality": "optical", "gsd_metres": "10.0", "modality2": "optical", "gsd_metres2": "10.0",
+            "pair_kind": "change",
+        },
+    )
+    body = response.json()
+    assert body["ok"] is True
+    assert body["kind"] == "change"
+    assert body["scene_id"] is not None
+
+    scene = next(s for s in client.get("/scenes").json() if s["id"] == body["scene_id"])
+    assert scene["kind"] == "change"
+    assert scene["sensor"] == "optical"
+
+    # the AFTER (current) state answers ordinary questions directly
+    query_response = client.post(
+        "/query", json={"scene_id": body["scene_id"], "query": "How much forest is there in hectares?"}
+    )
+    assert query_response.status_code == 200
+    assert query_response.json()["evidence"]["units"] == "hectares"
+
+
+def test_change_pair_upload_carries_caller_supplied_dates(client):
+    before, after = _shifted_grayscale_pair((0.0, 0.0), seed=4)
+    response = client.post(
+        "/upload",
+        files={"file": ("before.png", before, "image/png"), "file2": ("after.png", after, "image/png")},
+        data={
+            "modality": "optical", "gsd_metres": "10.0", "modality2": "optical", "gsd_metres2": "10.0",
+            "pair_kind": "change", "before_date": "2019-03", "after_date": "2023-11",
+        },
+    )
+    body = response.json()
+    assert body["ok"] is True
+    scene = next(s for s in client.get("/scenes").json() if s["id"] == body["scene_id"])
+    assert scene["before_date"] == "2019-03"
+    assert scene["after_date"] == "2023-11"
+
+
+def test_change_pair_before_and_after_image_and_mask_endpoints(client):
+    before, after = _shifted_grayscale_pair((0.0, 0.0), seed=5)
+    response = client.post(
+        "/upload",
+        files={"file": ("before.png", before, "image/png"), "file2": ("after.png", after, "image/png")},
+        data={
+            "modality": "optical", "gsd_metres": "10.0", "modality2": "optical", "gsd_metres2": "10.0",
+            "pair_kind": "change",
+        },
+    )
+    scene_id = response.json()["scene_id"]
+
+    for endpoint in ("image", "mask"):
+        for when in ("before", "after"):
+            r = client.get(f"/scenes/{scene_id}/{endpoint}", params={"when": when})
+            assert r.status_code == 200
+            assert r.headers["content-type"] == "image/png"
+
+
+def test_before_image_and_mask_404_for_a_non_change_scene(client):
+    demo_scene_id = next(s["id"] for s in client.get("/scenes").json() if s["kind"] == "single")
+    assert client.get(f"/scenes/{demo_scene_id}/image", params={"when": "before"}).status_code == 404
+    assert client.get(f"/scenes/{demo_scene_id}/mask", params={"when": "before"}).status_code == 404
+
+
+def test_change_summary_endpoint_returns_per_class_deltas(client):
+    before, after = _shifted_grayscale_pair((0.0, 0.0), seed=6)
+    response = client.post(
+        "/upload",
+        files={"file": ("before.png", before, "image/png"), "file2": ("after.png", after, "image/png")},
+        data={
+            "modality": "optical", "gsd_metres": "10.0", "modality2": "optical", "gsd_metres2": "10.0",
+            "pair_kind": "change",
+        },
+    )
+    scene_id = response.json()["scene_id"]
+
+    r = client.get(f"/scenes/{scene_id}/change")
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body["summary"], str)
+    assert isinstance(body["changed_pixels"], int)
+    assert 0.0 <= body["changed_fraction"] <= 1.0
+    for entry in body["classes"]:
+        assert entry["net_ha"] == pytest.approx(entry["gained_ha"] - entry["lost_ha"])
+
+
+def test_change_mask_endpoint_returns_an_rgba_png(client):
+    before, after = _shifted_grayscale_pair((0.0, 0.0), seed=7)
+    response = client.post(
+        "/upload",
+        files={"file": ("before.png", before, "image/png"), "file2": ("after.png", after, "image/png")},
+        data={
+            "modality": "optical", "gsd_metres": "10.0", "modality2": "optical", "gsd_metres2": "10.0",
+            "pair_kind": "change",
+        },
+    )
+    scene_id = response.json()["scene_id"]
+
+    r = client.get(f"/scenes/{scene_id}/change-mask")
+    assert r.status_code == 200
+    image = Image.open(io.BytesIO(r.content))
+    assert image.mode == "RGBA"
+
+
+def test_change_endpoints_404_for_a_non_change_scene(client):
+    demo_scene_id = next(s["id"] for s in client.get("/scenes").json() if s["kind"] == "single")
+    assert client.get(f"/scenes/{demo_scene_id}/change").status_code == 404
+    assert client.get(f"/scenes/{demo_scene_id}/change-mask").status_code == 404
+
+
+def test_change_phrased_queries_resolve_via_the_keyword_fallback(client):
+    before, after = _shifted_grayscale_pair((0.0, 0.0), seed=8)
+    response = client.post(
+        "/upload",
+        files={"file": ("before.png", before, "image/png"), "file2": ("after.png", after, "image/png")},
+        data={
+            "modality": "optical", "gsd_metres": "10.0", "modality2": "optical", "gsd_metres2": "10.0",
+            "pair_kind": "change",
+        },
+    )
+    scene_id = response.json()["scene_id"]
+
+    for query in ("What changed between these dates?", "Has built-up area increased?"):
+        r = client.post("/query", json={"scene_id": scene_id, "query": query})
+        assert r.status_code == 200
+        assert isinstance(r.json()["evidence"]["value"], str)
+
+
+def test_severely_misaligned_pair_falls_back_to_a_single_scene(client):
+    # shift far beyond DEFAULT_MAX_SHIFT_PX (5.0 px)
+    optical, sar = _shifted_grayscale_pair((25.0, 18.0))
+    response = client.post(
+        "/upload",
+        files={"file": ("opt.png", optical, "image/png"), "file2": ("sar.png", sar, "image/png")},
+        data={
+            "modality": "optical", "gsd_metres": "10.0", "modality2": "sar", "gsd_metres2": "10.0",
+            "pair_kind": "cross_modal",
+        },
+    )
+    body = response.json()
+    assert body["ok"] is True  # not a hard rejection -- see raster_io/validate.py
+    assert body["kind"] == "single"
+    assert body["fallback_single_modality"] is True
+    assert any("misaligned" in w for w in body["warnings"])

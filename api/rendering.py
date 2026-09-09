@@ -13,14 +13,24 @@ from rasterio import features
 from rasterio.transform import Affine
 
 from agent.tasks import ClassificationResult
+from evidence.ops import ClassId, class_mask
 from evidence.schema import Feature, FeatureCollection, Polygon, SourceConfidence, TraceStep
 
 
-def _vectorize_class(mask: np.ndarray, class_id: int, class_name: str) -> list[Feature]:
-    """Every connected region of `class_id` in `mask`, as GeoJSON Features
-    in pixel coordinates -- the actual pixels responsible for the answer,
-    not an invented geometry."""
-    binary = mask == class_id
+def _class_label(classes: dict[int, str], class_id: ClassId) -> str:
+    """A human-readable label for a class_id that might be a list (a
+    generic noun like "forest" resolved to several real classes at once --
+    see agent/vocabulary.py and evidence/ops.py)."""
+    if isinstance(class_id, list):
+        return " / ".join(classes.get(c, str(c)) for c in class_id)
+    return classes.get(class_id, str(class_id))
+
+
+def _vectorize_class(mask: np.ndarray, class_id: ClassId, class_name: str) -> list[Feature]:
+    """Every connected region of `class_id` (or the union of a list of
+    class_ids) in `mask`, as GeoJSON Features in pixel coordinates -- the
+    actual pixels responsible for the answer, not an invented geometry."""
+    binary = class_mask(mask, class_id)
     if not binary.any():
         return []
     shapes = features.shapes(binary.astype(np.uint8), mask=binary, transform=Affine.identity())
@@ -50,13 +60,13 @@ def build_geometry(mask: np.ndarray, classes: dict[int, str], final_step: TraceS
 
     if tool in ("count", "size", "presence"):
         class_id = params["class_id"]
-        return FeatureCollection(features=_vectorize_class(mask, class_id, classes.get(class_id, str(class_id))))
+        return FeatureCollection(features=_vectorize_class(mask, class_id, _class_label(classes, class_id)))
 
     if tool == "adjacency":
         class_a, class_b = params["class_a"], params["class_b"]
         return FeatureCollection(features=(
-            _vectorize_class(mask, class_a, classes.get(class_a, str(class_a)))
-            + _vectorize_class(mask, class_b, classes.get(class_b, str(class_b)))
+            _vectorize_class(mask, class_a, _class_label(classes, class_a))
+            + _vectorize_class(mask, class_b, _class_label(classes, class_b))
         ))
 
     if tool == "ground":
@@ -94,10 +104,10 @@ def build_answer(full_trace: list[TraceStep], classes: dict[int, str]):
     tool, output, params = final_step.tool, final_step.output, final_step.parameters
 
     if tool == "count":
-        class_name = _pluralize(classes.get(params["class_id"], str(params["class_id"])).lower())
+        class_name = _pluralize(_class_label(classes, params["class_id"]).lower())
         return int(output), class_name, f"{output} {class_name}", limitation
     if tool == "size":
-        class_name = classes.get(params["class_id"], str(params["class_id"])).lower()
+        class_name = _class_label(classes, params["class_id"]).lower()
         return float(output), "hectares", f"{output:.2f} ha of {class_name}", limitation
     if tool in ("presence", "adjacency"):
         return bool(output), None, ("yes" if output else "no"), limitation

@@ -40,8 +40,14 @@ def apply_capability_guardrail(
     for step in plan:
         if step.tool == "count":
             class_id = step.parameters["class_id"]
-            class_name = classes.get(class_id, "")
-            capability = table.classes.get(class_name)
+            # A list class_id (agent.vocabulary.resolve_noun resolving a
+            # generic noun like "forest" to several real classes at once)
+            # has no single name to look up here, and none of
+            # TYPICAL_OBJECT_SIZE_M's keys are multi-class groupings
+            # anyway -- treated the same as an unrecognised class: left
+            # untouched, not degraded.
+            class_name = None if isinstance(class_id, list) else classes.get(class_id, "")
+            capability = table.classes.get(class_name) if class_name is not None else None
             if capability is not None and not capability.countable:
                 limitation = (
                     f"Cannot count individual {class_name}s at {gsd_metres:.0f} m GSD "

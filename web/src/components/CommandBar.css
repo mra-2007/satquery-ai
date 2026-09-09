@@ -1,0 +1,102 @@
+.command-bar {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-6);
+  transform: translateX(-50%);
+  z-index: 10;
+  width: 640px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.command-bar__form {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-md);
+  padding: 4px 4px 4px 16px;
+  box-shadow: var(--shadow-lifted);
+  backdrop-filter: blur(10px);
+  transition: border-color var(--duration-base) var(--ease-out);
+}
+.command-bar__form:focus-within {
+  border-color: var(--signal-active);
+}
+
+.command-bar__prompt {
+  font-family: var(--font-mono);
+  color: var(--signal-active);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.command-bar__input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-0);
+  font-family: var(--font-body);
+  font-size: 14px;
+  padding: 12px 0;
+}
+.command-bar__input::placeholder {
+  color: var(--text-2);
+}
+
+.command-bar__submit {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--surface-0);
+  background: var(--text-0);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 10px 18px;
+  transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+.command-bar__submit:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.command-bar__submit:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.command-bar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.command-bar__chip {
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  color: var(--text-1);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline);
+  border-radius: 999px;
+  padding: 6px 13px;
+  backdrop-filter: blur(6px);
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.command-bar__chip:not(:disabled):hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-raised);
+  border-color: var(--border-hairline-strong);
+  color: var(--text-0);
+}
+.command-bar__chip:disabled {
+  opacity: 0.4;
+}

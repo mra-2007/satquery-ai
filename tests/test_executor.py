@@ -129,6 +129,21 @@ def test_run_executes_change_tool():
     }
 
 
+def test_run_passes_classes_through_to_change_tool_summary():
+    # A real, previously-shipped bug: the 'change' tool never received the
+    # scene's class_id -> name mapping, so ChangeReport.summary always read
+    # "class 2 gained ..." instead of "Urban fabric gained ...", even
+    # though run() already receives `classes` for the capability guardrail.
+    before, after = _before_after()
+    plan = Plan.model_validate([{"id": "c1", "tool": "change", "parameters": {}}])
+    classes = {LAND: "Land", WATER: "Water", URBAN: "Urban fabric"}
+
+    result, _trace = run(plan, GSD_10M, before=before, after=after, classes=classes)
+
+    assert "Urban fabric" in result["c1"].summary
+    assert "class 2" not in result["c1"].summary
+
+
 def test_run_without_before_after_raises_when_plan_needs_change():
     plan = Plan.model_validate([{"id": "c1", "tool": "change", "parameters": {}}])
     with pytest.raises(ExecutorError, match="before and after"):
@@ -207,6 +222,64 @@ def test_run_caption_respects_max_length_parameter(monkeypatch):
 def test_run_without_mask_raises_when_plan_needs_caption():
     plan = Plan.model_validate([{"id": "cap1", "tool": "caption", "parameters": {}}])
     with pytest.raises(ExecutorError, match="caption"):
+        run(plan, GSD_10M)
+
+
+# --- automatic verification of every caption step's output -----------------
+
+
+def test_run_automatically_verifies_caption_output(monkeypatch):
+    # Per CLAUDE.md's "No pixel, no claim": a caption step must always be
+    # independently re-checked, whether or not the plan itself asked for
+    # verification -- this is the point of wiring it into the executor.
+    from tools import caption as caption_tool
+    monkeypatch.setattr(caption_tool, "GOOGLE_API_KEY", None)
+
+    plan = Plan.model_validate([{"id": "cap1", "tool": "caption", "parameters": {}}])
+    result, trace = run(plan, GSD_10M, mask=_water_mask())
+
+    verify_entries = [e for e in trace if e.tool == "verify"]
+    assert len(verify_entries) == 1
+    entry = verify_entries[0]
+    assert entry.task == "verify:cap1"
+    assert entry.confidence == 1.0
+    assert entry.parameters == {"answer": result["cap1"].caption}
+    # no Gemini available in this test -- the template is used verbatim, so
+    # every one of its own claims must recompute correctly against the same mask.
+    assert entry.output["all_passed"] is True
+    assert entry.output["claims"]  # the mask had real classes, so real claims were found
+    assert entry.output["verified_answer"] == result["cap1"].caption
+
+
+def test_run_does_not_verify_when_no_caption_step_ran():
+    _, trace = run(_ops_plan(), GSD_10M, mask=_water_mask())
+    assert not any(e.tool == "verify" for e in trace)
+
+
+# --- the 'verify' tool, explicitly planned --------------------------------------
+
+
+def test_run_executes_verify_tool_explicitly():
+    from tools.verifier import VerificationResult
+
+    # SEGMENTATION_CLASSES[WATER] == "Industrial or commercial units" -- the
+    # real class name, not this test file's own WATER=1 alias, is what
+    # tools/verifier.py resolves against.
+    plan = Plan.model_validate([
+        {"id": "v1", "tool": "verify", "parameters": {"answer": "0.04 ha of Industrial or commercial units"}},
+    ])
+    result, trace = run(plan, GSD_10M, mask=_water_mask())
+
+    assert isinstance(result["v1"], VerificationResult)
+    entry = trace.steps[0]
+    assert entry.task == "execute:v1"
+    assert entry.tool == "verify"
+    assert entry.output["all_passed"] is True
+
+
+def test_run_without_mask_raises_when_plan_needs_verify():
+    plan = Plan.model_validate([{"id": "v1", "tool": "verify", "parameters": {"answer": "x"}}])
+    with pytest.raises(ExecutorError, match="verify"):
         run(plan, GSD_10M)
 
 

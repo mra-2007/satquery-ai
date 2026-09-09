@@ -41,6 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agent.dsl import Plan, validate
 from agent.registry import REGISTRY
+from agent.tasks import _CHANGE_WORDS, _DESCRIBE_WORDS
 from agent.vocabulary import resolve_noun
 
 AGENT_DIR = Path(__file__).resolve().parent
@@ -127,12 +128,19 @@ assert len(FEW_SHOT_EXAMPLES) == 15
 # --- Prompt construction -----------------------------------------------------
 
 
+def _type_name(ptype: Any) -> str:
+    """`ptype.__name__` for a real type (int, str, ...); repr() for
+    agent.registry.CLASS_ID, the int-or-list[int] sentinel, which isn't a
+    type at all."""
+    return getattr(ptype, "__name__", None) or repr(ptype)
+
+
 def _tool_schema_text() -> str:
     """Tool descriptions generated from the live registry, so the prompt
     can never drift out of sync with agent/registry.py."""
     lines = []
     for tool in REGISTRY.values():
-        params = ", ".join(f"{name}: {ptype.__name__}" for name, ptype in tool.permitted_parameters.items())
+        params = ", ".join(f"{name}: {_type_name(ptype)}" for name, ptype in tool.permitted_parameters.items())
         lines.append(f"- {tool.name}({params or 'no parameters'}) -- {tool.description}")
     return "\n".join(lines)
 
@@ -249,7 +257,7 @@ _PRESENCE_THERE_RE = re.compile(r"^is there (?:any )?(?:a |an |the )?(.+)$")
 _CONTAIN_RE = re.compile(r"^does (?:this|the) (?:scene|image|patch) contain (?:any )?(.+)$")
 
 
-def _resolve_class(phrase: str, scene: SceneDescriptor) -> int:
+def _resolve_class(phrase: str, scene: SceneDescriptor) -> int | list[int]:
     phrase = phrase.strip().lower()
     for class_id, name in scene.classes.items():
         if name.lower() == phrase:
@@ -272,19 +280,45 @@ def _resolve_class(phrase: str, scene: SceneDescriptor) -> int:
     # noun that doesn't literally overlap with any of the scene's own
     # class names at all (e.g. "roads", "grass", "residential" against the
     # real 19-class BigEarthNet vocabulary -- see agent/vocabulary.py).
-    # Only useful when the scene's own classes actually include that
-    # canonical name; a scene built from an unrelated class scheme simply
-    # won't match here either, and falls through to the same error below.
+    # A generic noun ("forest", "water") resolves to a LIST of every real
+    # class it covers, not just one -- see evidence/ops.py's docstring for
+    # why picking one arbitrarily was a real bug, not a simplification.
+    # Only useful when the scene's own classes actually include the
+    # resolved name(s); a scene built from an unrelated class scheme
+    # simply won't match here either, and falls through to the error below.
     canonical_name = resolve_noun(phrase)
     if canonical_name is not None:
-        for class_id, name in scene.classes.items():
-            if name.lower() == canonical_name.lower():
-                return class_id
+        names = canonical_name if isinstance(canonical_name, list) else [canonical_name]
+        resolved_ids = [
+            class_id
+            for name in names
+            for class_id, existing_name in scene.classes.items()
+            if existing_name.lower() == name.lower()
+        ]
+        if resolved_ids:
+            return resolved_ids if isinstance(canonical_name, list) else resolved_ids[0]
     raise PlannerError(f"keyword fallback: could not match {phrase!r} to a class in the scene")
 
 
 def _keyword_fallback(query: str, scene: SceneDescriptor) -> Plan:
     q = query.strip().rstrip("?").strip().lower()
+
+    # The 'change' tool (evidence/change.py) takes no parameters at all --
+    # it always operates on whatever before/after rasters the executor was
+    # given -- so any change-phrased query maps to the same single-step
+    # plan regardless of exact wording. _CHANGE_WORDS is agent.tasks's own
+    # list (shared, not duplicated) so this and classify_task's keyword
+    # fallback can never disagree about what counts as a change question.
+    if any(word in q for word in _CHANGE_WORDS):
+        return _fallback_plan("change", {})
+
+    # The 'caption' tool likewise takes no parameters -- its whole job is
+    # describing whatever the mask actually contains, per
+    # tools/caption.py. _DESCRIBE_WORDS is agent.tasks's own list, checked
+    # after change words for the same reason classify_task's own fallback
+    # does: "describe what changed" is a change question, not a caption one.
+    if any(word in q for word in _DESCRIBE_WORDS):
+        return _fallback_plan("caption", {})
 
     m = _ADJACENCY_WITHIN_RE.match(q)
     if m:

@@ -1,0 +1,55 @@
+.map-view {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-0);
+}
+
+.map-view__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.map-view__canvas .ol-viewport {
+  background: var(--surface-0);
+}
+
+/* OpenLayers' default scale-line control, restyled to the instrument theme */
+.map-view .ol-scale-line {
+  position: absolute;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  background: transparent;
+  padding: 0;
+  z-index: 6;
+}
+.map-view .ol-scale-line-inner {
+  border: 1px solid var(--text-2);
+  border-top: none;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px 1px;
+  white-space: nowrap;
+}
+
+.map-view__coord-readout {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 6;
+  display: flex;
+  gap: var(--space-4);
+  padding: 6px 12px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-0);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+
+.map-view__coord-readout-dim {
+  color: var(--text-2);
+}

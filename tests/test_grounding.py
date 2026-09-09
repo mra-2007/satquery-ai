@@ -19,6 +19,7 @@ from tools.grounding import GroundingError, GroundingResult, ground
 GSD_10M = {"gsd_metres": 10.0}
 
 INLAND_WATERS = SEGMENTATION_CLASSES.index("Inland waters")
+MARINE_WATERS = SEGMENTATION_CLASSES.index("Marine waters")
 ARABLE_LAND = SEGMENTATION_CLASSES.index("Arable land")
 URBAN_FABRIC = SEGMENTATION_CLASSES.index("Urban fabric")
 
@@ -38,9 +39,25 @@ def _two_water_bodies_mask() -> np.ndarray:
 
 
 def test_ground_resolves_noun_via_vocabulary():
+    # "water body" is a generic noun that resolves to BOTH real water
+    # classes (agent/vocabulary.py) -- class_id is the full list this
+    # scene's mask only has one of, class_name joins both real names.
     result = ground(_two_water_bodies_mask(), GSD_10M, "the water body in the north-west")
-    assert result.class_name == "Inland waters"
-    assert result.class_id == INLAND_WATERS
+    assert result.class_name == "Inland waters / Marine waters"
+    assert result.class_id == [INLAND_WATERS, MARINE_WATERS]
+
+
+def test_ground_generic_noun_still_finds_a_region_present_under_only_one_of_its_classes():
+    # Regression test: a generic noun resolving to several classes must
+    # still find a region when the mask only has ONE of them -- the bug
+    # this whole change fixes (a picked "representative" class absent
+    # from a given scene used to make count()/size() answer 0/False even
+    # though the concept was clearly present under a sibling class).
+    mask = np.full((10, 10), ARABLE_LAND, dtype=int)
+    mask[2:4, 2:4] = MARINE_WATERS  # only Marine waters present, no Inland waters at all
+    result = ground(mask, GSD_10M, "the water body")
+    assert result.class_name == "Inland waters / Marine waters"
+    assert result.area_ha == pytest.approx(0.04)
 
 
 def test_ground_unresolvable_noun_raises():

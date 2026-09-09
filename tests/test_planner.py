@@ -123,6 +123,31 @@ def test_fallback_how_much_x_is_there_without_the_word_area():
     assert plan[0].parameters["class_id"] == 2
 
 
+def test_fallback_change_query_maps_to_the_parameterless_change_tool():
+    plan = planner._keyword_fallback("What changed between these dates?", TEST_SCENE)
+    assert plan[0].tool == "change"
+    assert plan[0].parameters == {}
+
+
+def test_fallback_change_query_matches_increase_phrasing_too():
+    # No class-name parsing needed at all -- the change tool takes no
+    # parameters, so "built-up area" never needs to resolve to a class_id.
+    plan = planner._keyword_fallback("Has built-up area increased?", TEST_SCENE)
+    assert plan[0].tool == "change"
+    assert plan[0].parameters == {}
+
+
+def test_fallback_describe_query_maps_to_the_parameterless_caption_tool():
+    plan = planner._keyword_fallback("Describe this scene.", TEST_SCENE)
+    assert plan[0].tool == "caption"
+    assert plan[0].parameters == {}
+
+
+def test_fallback_summarize_phrasing_also_maps_to_caption():
+    plan = planner._keyword_fallback("Summarize what this image shows.", TEST_SCENE)
+    assert plan[0].tool == "caption"
+
+
 def test_resolve_class_matches_a_paraphrase_via_shared_prefix():
     scene = TEST_SCENE.model_copy(update={"classes": {**TEST_SCENE.classes, 3: "building"}})
     assert planner._resolve_class("there any built-up area", scene) == 3

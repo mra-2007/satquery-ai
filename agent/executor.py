@@ -31,6 +31,7 @@ from evidence.schema import TraceStep
 from tools import caption as caption_tool
 from tools import cross_modal as cross_modal_tool
 from tools import grounding as grounding_tool
+from tools import verifier as verifier_tool
 
 # Tools backed directly by evidence/ops.py. Each has the shape
 # fn(mask, ...permitted_parameters..., metadata) -- mask and metadata are
@@ -98,6 +99,18 @@ def _summarize(output: Any) -> Any:
                  "fused_area_ha": f.fused_area_ha, "detected_by": f.detected_by,
                  "attribution": f.attribution}
                 for f in output.findings
+            ],
+        }
+    if isinstance(output, verifier_tool.VerificationResult):
+        return {
+            "original_answer": output.original_answer,
+            "verified_answer": output.verified_answer,
+            "all_passed": output.all_passed,
+            "claims": [
+                {"text": c.text, "claim_type": c.claim_type, "tool": c.tool, "class_name": c.class_name,
+                 "claimed_value": c.claimed_value, "recomputed_value": c.recomputed_value,
+                 "passed": c.passed, "reason": c.reason}
+                for c in output.claims
             ],
         }
     return output
@@ -174,7 +187,13 @@ def run(
             raise ExecutorError(
                 "plan uses the 'change' tool but before and after rasters were not both provided"
             )
-        tool_functions["change"] = functools.partial(change.detect_change, before, after, metadata)
+        # class_names=classes so ChangeReport.summary reads "Urban fabric
+        # gained ..." rather than "class 0 gained ..." -- omitted only when
+        # the caller has no class mapping at all (classes=None), the same
+        # condition that already skips the capability guardrail above.
+        tool_functions["change"] = functools.partial(
+            change.detect_change, before, after, metadata, class_names=classes,
+        )
 
     if "caption" in needed_tools:
         if mask is None:
@@ -191,10 +210,41 @@ def run(
             raise ExecutorError("plan uses the 'cross_modal' tool but no stack was provided")
         tool_functions["cross_modal"] = functools.partial(cross_modal_tool.cross_modal_analysis, stack, metadata)
 
+    if "verify" in needed_tools:
+        if mask is None:
+            raise ExecutorError("plan uses the 'verify' tool but no mask was provided")
+        tool_functions["verify"] = functools.partial(verifier_tool.verify_answer, mask, metadata)
+
     dsl_result = _dsl_execute(plan, tool_functions)
 
     trace_steps = guardrail_trace + [
         step.model_copy(update={"output": _summarize(step.output)})
         for step in dsl_result.trace
     ]
+
+    # Per CLAUDE.md's "No pixel, no claim": tools/caption.py's `caption`
+    # field is the one place in this codebase where text can genuinely
+    # drift from the mask -- it's Gemini's reworded version of a fact-only
+    # template, and although caption.py's prompt tells Gemini not to change
+    # any fact, that instruction isn't a guarantee. Every caption step is
+    # therefore automatically re-checked here, independent of whatever the
+    # plan itself asked for, so a verification report always appears in the
+    # trace whenever a caption was produced -- the LLM never has to think
+    # to ask for it. Uses `tool="verify"` (not a new tool name) so a caller
+    # can find any verification step, automatic or explicitly planned, the
+    # same way: `step.tool == "verify"`.
+    if mask is not None:
+        for step in plan:
+            if step.tool != "caption" or step.id not in dsl_result.outputs:
+                continue
+            caption_result = dsl_result.outputs[step.id]
+            verification = verifier_tool.verify_answer(mask, metadata, caption_result.caption)
+            trace_steps.append(TraceStep(
+                task=f"verify:{step.id}",
+                tool="verify",
+                parameters={"answer": caption_result.caption},
+                output=_summarize(verification),
+                confidence=1.0,
+            ))
+
     return dsl_result.outputs, ExecutionTrace(trace_steps)

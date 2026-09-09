@@ -4,6 +4,8 @@ __pycache__/
 .env
 data/
 agent/.cache/
-models/
+models/*
+!models/satquery_model.onnx
+!models/class_config.json
 outputs/
 node_modules/

@@ -32,18 +32,22 @@ real class names this vocabulary resolves built-up nouns to -- so the
 guardrail keeps firing correctly instead of silently going inert once
 callers stop passing the old 4-bucket scene.
 
-A real, disclosed limitation: many-to-one, not many-to-many
-----------------------------------------------------------------
-NOUN_TO_CLASS resolves each noun to exactly ONE segmentation class,
-because every evidence/ops.py tool (count/size/presence/adjacency) takes a
-single class_id -- there is no "union of classes" tool call in this
-codebase. This is fine for a noun with one obvious class ("grass" ->
-"Pastures"), but for a generic noun that legitimately spans several raw
-classes (e.g. "forest" could be any of Broad-leaved/Coniferous/Mixed
-forest, or Transitional woodland, shrub) this map necessarily picks ONE
-representative class and will under-count real-world instances of the
-others. Each such choice is called out in a comment below; it is a
-disclosed simplification of this map's design, not an oversight.
+Many-to-one AND many-to-many
+--------------------------------
+Most nouns resolve to exactly one segmentation class ("grass" ->
+"Pastures"). A generic noun that legitimately spans several raw classes
+-- "forest" could be Broad-leaved, Coniferous, or Mixed forest; "water"
+could be Inland or Marine waters -- resolves to a LIST of class names
+instead of picking one arbitrarily. This used to pick a single
+"representative" class (e.g. "forest" -> "Mixed forest" only), which
+silently returned 0 for any scene whose forest happened to be a different
+subtype -- a real bug, not a hypothetical one (a scene that was 97%
+Broad-leaved forest and 0% Mixed forest answered "0 hectares of forest").
+evidence/ops.py's count/size/presence/adjacency all accept a list of
+class ids for exactly this reason -- they union the classes into one
+mask (`np.isin`) before measuring, so "how many forest patches" also
+correctly merges adjacent pixels of different forest subtypes into one
+connected patch rather than fragmenting them by raw class boundary.
 
 Some nouns benchmarks ask about have NO match anywhere in this
 vocabulary -- there is no dedicated road class, no sport/leisure class, no
@@ -93,7 +97,7 @@ assert len(SEGMENTATION_CLASSES) == 19
 # also tries stripping/adding a trailing "s", so most entries need only one
 # form listed.
 
-NOUN_TO_CLASS: dict[str, str] = {
+NOUN_TO_CLASS: dict[str, str | list[str]] = {
     # --- Urban fabric: residential/built-up references, plus the CORINE-only
     # classes BigEarthNet's 19-class reduction has no dedicated slot for at
     # all (road, sport/leisure, park) -- see the module docstring.
@@ -153,12 +157,10 @@ NOUN_TO_CLASS: dict[str, str] = {
     "agro-forestry": "Agro-forestry areas",
     "agroforestry": "Agro-forestry areas",
 
-    # --- Forest: "forest"/"forests" is generic and could be any of the 4
-    # forest-like classes below -- resolved to "Mixed forest" as the single
-    # representative class (see the module docstring's "many-to-one, not
-    # many-to-many" limitation). The specific forest types still resolve
-    # to their own exact class.
-    "forest": "Mixed forest",
+    # --- Forest: "forest"/"forests" is generic and spans all 3 real forest
+    # classes -- resolves to all of them (see the module docstring). The
+    # specific forest types still resolve to their own exact class alone.
+    "forest": ["Broad-leaved forest", "Coniferous forest", "Mixed forest"],
     "broad-leaved forest": "Broad-leaved forest",
     "broadleaf forest": "Broad-leaved forest",
     "deciduous forest": "Broad-leaved forest",
@@ -191,13 +193,13 @@ NOUN_TO_CLASS: dict[str, str] = {
     "marsh": "Inland wetlands",
     "coastal wetland": "Coastal wetlands",
 
-    # --- Water: "water"/"water area"/"water body" is generic -- resolved to
-    # "Inland waters" (the common freshwater case) rather than "Marine
-    # waters", per the module docstring's "many-to-one" limitation. "sea"/
-    # "ocean" still resolve to the correct "Marine waters" specifically.
-    "water": "Inland waters",
-    "water area": "Inland waters",
-    "water body": "Inland waters",
+    # --- Water: "water"/"water area"/"water body" is generic -- resolves to
+    # both Inland and Marine waters (see the module docstring). "sea"/
+    # "ocean" still resolve to the correct "Marine waters" alone, and
+    # "lake"/"river"/etc. to "Inland waters" alone.
+    "water": ["Inland waters", "Marine waters"],
+    "water area": ["Inland waters", "Marine waters"],
+    "water body": ["Inland waters", "Marine waters"],
     "lake": "Inland waters",
     "river": "Inland waters",
     "pond": "Inland waters",
@@ -209,9 +211,11 @@ NOUN_TO_CLASS: dict[str, str] = {
 }
 
 
-def resolve_noun(phrase: str) -> str | None:
-    """Best-effort match of a natural-language noun phrase to one of
-    SEGMENTATION_CLASSES's exact names.
+def resolve_noun(phrase: str) -> str | list[str] | None:
+    """Best-effort match of a natural-language noun phrase to one or more
+    of SEGMENTATION_CLASSES's exact names (a list for a generic noun like
+    "forest"/"water" that spans several real classes -- see the module
+    docstring -- a plain str for everything else).
 
     Tries, in order: an exact NOUN_TO_CLASS lookup, the same lookup after
     stripping/adding a trailing "s" (covers plural/singular mismatches the

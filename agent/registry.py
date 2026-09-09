@@ -25,6 +25,31 @@ class ParameterValidationError(ValueError):
     match that tool's permitted schema."""
 
 
+class _ClassIdOrList:
+    """Sentinel schema type for a class_id/class_a/class_b parameter:
+    either a single int, or a non-empty list[int]. Needed because
+    agent.vocabulary.resolve_noun() can resolve a generic noun ("forest",
+    "water") to several real classes at once rather than picking one
+    arbitrarily -- evidence/ops.py's tools union a list into one mask
+    before measuring, per evidence/ops.py's own docstring."""
+
+    def __repr__(self) -> str:
+        return "int | list[int]"
+
+
+CLASS_ID = _ClassIdOrList()
+
+
+def _is_valid_class_id(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, list):
+        return len(value) > 0 and all(isinstance(v, int) and not isinstance(v, bool) for v in value)
+    return False
+
+
 @dataclass(frozen=True)
 class Tool:
     """One entry in the registry. `permitted_parameters` maps each allowed
@@ -36,7 +61,7 @@ class Tool:
     accepted_modalities: Modality
     gsd_range: tuple[float, float]  # (min_gsd_m, max_gsd_m), inclusive
     required_band_count: int
-    permitted_parameters: dict[str, type]
+    permitted_parameters: dict[str, type | _ClassIdOrList]
 
     def __post_init__(self) -> None:
         if self.accepted_modalities not in ("optical", "sar", "both"):
@@ -64,7 +89,7 @@ def _tool(
     accepted_modalities: Modality,
     gsd_range: tuple[float, float],
     required_band_count: int,
-    permitted_parameters: dict[str, type],
+    permitted_parameters: dict[str, type | _ClassIdOrList],
 ) -> Tool:
     return Tool(name, description, accepted_modalities, gsd_range,
                 required_band_count, permitted_parameters)
@@ -91,23 +116,23 @@ REGISTRY: dict[str, Tool] = {
         ),
         _tool(
             "count",
-            "Count connected components of a class that clear a minimum area.",
-            "both", (1.0, 60.0), 1, {"class_id": int, "min_area_m2": float},
+            "Count connected components of a class (or union of classes) that clear a minimum area.",
+            "both", (1.0, 60.0), 1, {"class_id": CLASS_ID, "min_area_m2": float},
         ),
         _tool(
             "size",
-            "Total area covered by a class, in hectares.",
-            "both", (1.0, 60.0), 1, {"class_id": int},
+            "Total area covered by a class (or union of classes), in hectares.",
+            "both", (1.0, 60.0), 1, {"class_id": CLASS_ID},
         ),
         _tool(
             "presence",
-            "Whether a class has any component clearing a minimum area.",
-            "both", (1.0, 60.0), 1, {"class_id": int, "min_area_m2": float},
+            "Whether a class (or union of classes) has any component clearing a minimum area.",
+            "both", (1.0, 60.0), 1, {"class_id": CLASS_ID, "min_area_m2": float},
         ),
         _tool(
             "adjacency",
-            "Whether class_a lies within a given distance of class_b.",
-            "both", (1.0, 60.0), 1, {"class_a": int, "class_b": int, "distance_m": float},
+            "Whether class_a lies within a given distance of class_b (each a class or union of classes).",
+            "both", (1.0, 60.0), 1, {"class_a": CLASS_ID, "class_b": CLASS_ID, "distance_m": float},
         ),
         _tool(
             "change",
@@ -129,6 +154,12 @@ REGISTRY: dict[str, Tool] = {
             "Segments the same raw stack three ways (optical-only, SAR-only, "
             "fused) and reports which sensor(s) found each class.",
             "both", (1.0, 60.0), 16, {"cloud_simulation": bool},
+        ),
+        _tool(
+            "verify",
+            "Splits a generated answer into factual claims and re-tests each "
+            "against the mask, per CLAUDE.md's 'No pixel, no claim'.",
+            "both", (1.0, 60.0), 1, {"answer": str},
         ),
     ]
 }
@@ -208,6 +239,15 @@ def validate_parameters(tool: Tool, parameters: dict[str, Any]) -> None:
 
     for param_name, value in parameters.items():
         expected_type = tool.permitted_parameters[param_name]
+
+        if isinstance(expected_type, _ClassIdOrList):
+            if not _is_valid_class_id(value):
+                raise ParameterValidationError(
+                    f"{tool.name!r}: parameter {param_name!r} expected an int or a "
+                    f"non-empty list[int], got {value!r}"
+                )
+            continue
+
         # a whole-number float parameter is routinely written as a plain
         # int (500, not 500.0) in hand-written or LLM-emitted JSON -- that's
         # a valid float, so accept it. bool is excluded even though it's

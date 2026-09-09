@@ -85,6 +85,7 @@ def validate_images(
     expected_gsd_range: tuple[float, float] | None = None,
     min_band_count: int | None = None,
     max_shift_px: float = DEFAULT_MAX_SHIFT_PX,
+    require_matching_crs: bool = True,
 ) -> ValidationResult:
     """Validate `inputs` (1 or 2 ImageInputs) before any model is allowed
     to run on them.
@@ -94,6 +95,14 @@ def validate_images(
     by more than `max_shift_px`, so proceed with single-image analysis
     only -- `reason` still explains why, for the trace/UI, but this is not
     a hard rejection.
+
+    `require_matching_crs` (default True) rejects a pair outright when
+    either image lacks CRS metadata or the two disagree -- correct for
+    georeferenced sources, where mismatched CRS makes any pixel
+    comparison meaningless. Pass False when the caller is instead relying
+    on phase_cross_correlation itself as the alignment check (e.g. two
+    plain PNG/JPEG uploads the caller already knows cover the same
+    footprint) -- CRS is then skipped, not assumed to match.
     """
     trace: list[TraceStep] = []
 
@@ -153,14 +162,20 @@ def validate_images(
 
     trace.append(_trace("per_image", {"count": len(inputs)}, {"ok": True}, 1.0))
 
-    # 6. CRS -- must match across a pair
+    # 6. CRS -- must match across a pair, unless the caller opted out
     if len(inputs) == 2:
-        crs_values = {item.image.crs for item in inputs}
-        if None in crs_values:
-            return _reject("cannot compare a pair of images without CRS metadata on both of them")
-        if len(crs_values) > 1:
-            return _reject(f"images use different CRS: {sorted(crs_values)}")
-        trace.append(_trace("crs", {"crs": next(iter(crs_values))}, {"ok": True}, 1.0))
+        if not require_matching_crs:
+            trace.append(_trace(
+                "crs", {"require_matching_crs": False},
+                {"ok": True, "outcome": "skipped -- relying on phase correlation instead"}, 1.0,
+            ))
+        else:
+            crs_values = {item.image.crs for item in inputs}
+            if None in crs_values:
+                return _reject("cannot compare a pair of images without CRS metadata on both of them")
+            if len(crs_values) > 1:
+                return _reject(f"images use different CRS: {sorted(crs_values)}")
+            trace.append(_trace("crs", {"crs": next(iter(crs_values))}, {"ok": True}, 1.0))
 
     # 7. co-registration -- only meaningful for a pair
     shift_px = None

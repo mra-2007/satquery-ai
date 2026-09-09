@@ -6,6 +6,20 @@ below is the real output of those scripts on this exact codebase -- see
 `error` string recorded for every unsupported row) is in the CSVs each
 script writes alongside itself.
 
+**Revision note.** These numbers reflect two changes since the previous
+revision of this file: `models/satquery_model.onnx` was replaced with a
+newer model (reported training-set mIoU 0.4654, up from 0.4231;
+`models/class_config.json` is unchanged -- same 19 classes, 16 channels,
+normalisation stats), and `agent/vocabulary.py`'s generic nouns ("forest",
+"water") now resolve to ALL of their matching real classes
+(Broad-leaved/Coniferous/Mixed forest; Inland/Marine waters) instead of
+one arbitrary representative -- see `evidence/ops.py`'s docstring for why
+the old behaviour was a real bug (a scene could be genuinely full of
+forest and still answer "0 hectares" if its forest happened to be the one
+subtype the noun didn't resolve to). `agent/.cache/plans/` was cleared
+before this run so no plan cached under the old vocabulary logic could
+mask the fix.
+
 ## 1. BigEarthNet.txt benchmark (`eval/run_benchmark.py`)
 
 **Sample size and scope.** `data/bench_patches/questions.csv` holds 969
@@ -29,17 +43,25 @@ masks, to separate two different sources of error:
 - **GROUND-TRUTH mask** -- the patch's own annotated mask. This holds the
   reasoning layer (`classify_task` -> planner -> `validate` -> executor)
   fixed against perfect segmentation, isolating how much of the two
-  tables' gap is segmentation error vs. reasoning-layer error.
+  tables' gap is segmentation error vs. reasoning-layer error. This
+  table's questions resolve classes by matching BigEarthNet.txt's own
+  exact class-name text (`eval/run_benchmark.py`'s own regex), not
+  through `agent/vocabulary.py`'s generic-noun map -- so, as expected,
+  every number in it is unchanged by the vocabulary fix.
 
 ### Scored against the PREDICTED mask (real model output)
 
 | Category | N | Correct | Unsupported | Accuracy |
 |---|---|---|---|---|
-| presence | 117 | 85 | 4 | 72.6% |
-| count | 109 | 46 | 36 | 42.2% |
-| area | 113 | 88 | 3 | 77.9% |
-| adjacency | 315 | 180 | 27 | 57.1% |
-| **Overall** | 654 | 399 | 70 | 61.0% |
+| presence | 117 | 85 | 3 | 72.6% |
+| count | 109 | 48 | 31 | 44.0% |
+| area | 113 | 86 | 2 | 76.1% |
+| adjacency | 315 | 191 | 27 | 60.6% |
+| **Overall** | 654 | 410 | 63 | 62.7% |
+
+*(Previous model: 61.0% overall -- presence 72.6%, count 42.2%, area
+77.9%, adjacency 57.1%. The new model gains most on adjacency, +11
+correct answers; area moves 2 questions the other way.)*
 
 ### Scored against the GROUND-TRUTH mask (reasoning-layer ceiling)
 
@@ -51,16 +73,22 @@ masks, to separate two different sources of error:
 | adjacency | 315 | 313 | 0 | 99.4% |
 | **Overall** | 654 | 635 | 15 | 97.1% |
 
+*(Identical to the previous revision, as expected -- this table depends
+on the ground-truth masks and the reasoning layer, neither of which
+changed.)*
+
 ### Reading the gap between the two tables
 
 The reasoning layer alone (question parsing, `classify_task`, the
 planner, `validate`, the executor) scores **97.1%** against perfect
-segmentation -- essentially correct. The **36-point drop to 61.0%** on the
-predicted mask is real segmentation error from the model itself, not a
-flaw in the pipeline or in how these questions were parsed. `count` shows
-the largest drop (84.4% -> 42.2%): component-count questions are the most
-sensitive to segmentation noise, since a handful of misclassified pixels
-can fragment one true region into several, or merge two into one.
+segmentation -- essentially correct, and unchanged by this revision. The
+**34-point drop to 62.7%** on the predicted mask is real segmentation
+error from the model itself, not a flaw in the pipeline or in how these
+questions were parsed -- slightly narrower than the previous model's
+36-point drop. `count` still shows the largest drop (84.4% -> 44.0%):
+component-count questions are the most sensitive to segmentation noise,
+since a handful of misclassified pixels can fragment one true region into
+several, or merge two into one.
 
 ### Two known, disclosed sources of the residual (non-segmentation) error
 
@@ -85,10 +113,11 @@ can fragment one true region into several, or merge two into one.
   typical size) are not resolvable against the 25 m minimum, so no raw
   component count is ever available to compare against a count threshold.
   This is the same capability limit the RSVQA-LR eval below hits, applied
-  consistently. The predicted-mask table's additional 21 count
-  "unsupported" rows (36 total minus these 15) are a different thing: the
+  consistently. The predicted-mask table's additional 16 count
+  "unsupported" rows (31 total minus these 15) are a different thing: the
   model's own computed count/size value simply didn't fall inside any of
-  a question's valid answer range/options.
+  a question's valid answer range/options -- down from 21 with the
+  previous model, consistent with its slightly better segmentation.
 
 ## 2. RSVQA-LR (`eval/run_rsvqa.py`)
 
@@ -98,11 +127,20 @@ over 11 distinct images), scored with the full 19-class vocabulary
 
 | Question type | N | Correct | Unsupported | Accuracy |
 |---|---|---|---|---|
-| presence | 48 | 13 | 4 | 27.1% |
-| count | 74 | 7 | 45 | 9.5% |
-| comparison | 75 | 30 | 0 | 40.0% |
+| presence | 48 | 29 | 4 | 60.4% |
+| count | 74 | 8 | 45 | 10.8% |
+| comparison | 75 | 39 | 0 | 52.0% |
 | rural_urban | 3 | 3 | 0 | 100.0% |
-| **Overall** | 200 | 53 | 49 | 26.5% |
+| **Overall** | 200 | 79 | 49 | 39.5% |
+
+*(Previous model + single-representative-class vocabulary: 26.5% overall
+-- presence 27.1%, count 9.5%, comparison 40.0%, rural_urban 100.0%. The
+13-point overall jump here is the larger of the two changes: RSVQA-LR's
+"water area"/"water body" and generic "forest" phrasings are exactly the
+nouns the vocabulary fix changed, and this benchmark leans on them far
+more than BigEarthNet.txt's benchmark above, whose questions already
+spell out an exact class name. presence nearly doubled (13 -> 29
+correct) for the same reason.)*
 
 ### Domain caveat: this is a fundamentally weaker input than the benchmark above
 

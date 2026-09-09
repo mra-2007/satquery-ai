@@ -1,0 +1,139 @@
+.gain-loss-table {
+  position: absolute;
+  left: var(--space-4);
+  top: 100px; /* clears the top bar (56px) plus room for a possible warning banner (34px) */
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(8px);
+  width: 340px;
+  max-height: calc(100vh - 100px - var(--space-5));
+  overflow-y: auto;
+  animation: stagger-in var(--duration-base) var(--ease-out);
+}
+
+.gain-loss-table__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.gain-loss-table__changed-fraction {
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+.gain-loss-table__status {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-1);
+  line-height: 1.5;
+}
+.gain-loss-table__status--error {
+  color: var(--signal-error);
+}
+
+.gain-loss-table__legend {
+  display: flex;
+  gap: var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.gain-loss-table__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+.gain-loss-table__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.gain-loss-table__swatch--gain {
+  background: var(--signal-verified);
+}
+.gain-loss-table__swatch--loss {
+  background: var(--signal-withheld);
+}
+
+.gain-loss-table__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gain-loss-table__row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.7fr 0.7fr 0.7fr;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px 0;
+}
+
+.gain-loss-table__row:not(:last-child):not(.gain-loss-table__row--head) {
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.gain-loss-table__row--head {
+  padding-bottom: var(--space-2);
+}
+
+.gain-loss-table__num-head {
+  text-align: right;
+}
+
+.gain-loss-table__name {
+  font-size: 12px;
+  color: var(--text-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gain-loss-table__num {
+  font-size: 12px;
+  text-align: right;
+}
+
+/* Gains and losses are visually distinct by colour, reusing the two
+   signal colours already established elsewhere (verified green / withheld
+   amber) rather than introducing a third meaning into the palette. */
+.gain-loss-table__num--gain {
+  color: var(--signal-verified);
+}
+.gain-loss-table__num--loss {
+  color: var(--signal-withheld);
+}
+.gain-loss-table__num--net {
+  color: var(--text-1);
+  font-weight: 500;
+}
+.gain-loss-table__num--net-positive {
+  color: var(--signal-verified);
+}
+.gain-loss-table__num--net-negative {
+  color: var(--signal-withheld);
+}
+
+.gain-loss-table__summary {
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-hairline);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-1);
+}

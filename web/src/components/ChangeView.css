@@ -1,0 +1,137 @@
+.change-view {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-0);
+}
+
+.change-view__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.change-view__canvas .ol-viewport {
+  background: var(--surface-0);
+}
+
+.change-view .ol-scale-line {
+  position: absolute;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  background: transparent;
+  padding: 0;
+  z-index: 6;
+}
+.change-view .ol-scale-line-inner {
+  border: 1px solid var(--text-2);
+  border-top: none;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px 1px;
+  white-space: nowrap;
+}
+
+/* --- Date badges, one per side of the swipe convention (left = BEFORE,
+   right = AFTER, matching the divider's own clip direction) ------------- */
+
+.change-view__date-badge {
+  position: absolute;
+  top: 100px;
+  z-index: 7;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 6px 12px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+/* Offset past GainLossTable (left, 340px wide) and AnswerPanel (right,
+   380px wide) rather than sitting flush in the corners, so neither date
+   badge is ever covered by those panels at the desktop-first 1920x1080
+   target this app is built for. */
+.change-view__date-badge--before {
+  left: 380px;
+}
+.change-view__date-badge--after {
+  right: 420px;
+}
+.change-view__date-value {
+  font-size: 12px;
+  color: var(--text-0);
+}
+
+/* --- Draggable swipe divider -------------------------------------------- */
+
+.change-view__divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 8;
+  width: 32px;
+  margin-left: -16px; /* centre the hit-area on the divider line */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.change-view__divider-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--text-0);
+  box-shadow: 0 0 0 1px var(--border-hairline-strong);
+}
+
+.change-view__divider-handle {
+  position: relative;
+  z-index: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border-hairline-strong);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-0);
+  font-size: 13px;
+  transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.change-view__divider:hover .change-view__divider-handle,
+.change-view__divider--dragging .change-view__divider-handle {
+  background: var(--surface-3);
+  transform: scale(1.08);
+}
+
+/* --- Change-mask overlay toggle ------------------------------------------ */
+
+.change-view__mask-toggle {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 14px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+}
+.change-view__mask-toggle input {
+  accent-color: var(--signal-active);
+  cursor: pointer;
+}

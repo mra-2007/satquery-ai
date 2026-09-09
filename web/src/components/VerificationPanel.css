@@ -1,0 +1,172 @@
+/* Docked to the left of TraceDrawer (400px, itself left of AnswerPanel) --
+   a third panel in the same top-anchored row, opened from its own control
+   near the answer panel, same as TraceDrawer. */
+.verification-panel {
+  position: absolute;
+  top: 100px;
+  right: calc(380px + var(--space-5) + var(--space-4) + 400px + var(--space-4));
+  z-index: 9;
+  width: 380px;
+  max-height: calc(100vh - 100px - var(--space-5));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lifted);
+  backdrop-filter: blur(10px);
+  animation: slide-in-right var(--duration-slow) var(--ease-out);
+}
+
+.verification-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.verification-panel__title-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.verification-panel__status {
+  font-size: 11px;
+}
+.verification-panel__status--pass {
+  color: var(--signal-verified);
+}
+.verification-panel__status--fail {
+  color: var(--signal-withheld);
+}
+
+.verification-panel__close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 var(--space-1);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+.verification-panel__close:hover {
+  color: var(--text-0);
+}
+
+.verification-panel__caption {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.verification-panel__status-text {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.verification-panel__claims {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.verification-claim {
+  padding: var(--space-3);
+  border: 1px solid var(--border-hairline);
+  border-left: 2px solid var(--border-hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.verification-claim--pass {
+  border-left-color: var(--signal-verified);
+}
+.verification-claim--fail {
+  border-left-color: var(--signal-withheld);
+}
+
+.verification-claim__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.verification-claim__badge {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.verification-claim--pass .verification-claim__badge {
+  color: var(--signal-verified);
+}
+.verification-claim--fail .verification-claim__badge {
+  color: var(--signal-withheld);
+}
+
+.verification-claim__text {
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--text-0);
+  line-height: 1.4;
+}
+
+.verification-claim__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.verification-claim__tool {
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+
+.verification-claim__class {
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+.verification-claim__values {
+  display: flex;
+  gap: var(--space-4);
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+.verification-claim__reason {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--signal-withheld);
+  line-height: 1.4;
+}
+
+.verification-panel__answer-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-hairline);
+}
+
+.verification-panel__verified-text {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-1);
+}
