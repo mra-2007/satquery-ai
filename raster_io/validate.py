@@ -6,13 +6,29 @@ pair) CRS and pixel co-registration. Per CLAUDE.md's "No pixel, no claim":
 an image with no resolvable GSD is refused outright, never silently
 defaulted (e.g. to 10 m).
 
-Co-registration, when exactly two images are given, uses
+Co-registration, when exactly two images are given, normally uses
 skimage.registration.phase_cross_correlation on grayscale versions of both
 rasters. A small detected offset (<= max_shift_px) is corrected in place
 with scipy.ndimage.shift and the run proceeds normally; a larger one is
 NOT a hard rejection -- it's flagged (`fallback_single_modality=True`,
 with `reason` explaining why) so the caller can still answer using just
 one of the two images instead of aborting entirely.
+
+Cross-sensor pairs (`cross_sensor=True`, api/main.py's cross_modal upload)
+skip phase correlation entirely instead: optical and SAR measure genuinely
+different physics (reflectance vs. radar backscatter), so a naive
+grayscale correlation has no real shared structure to lock onto.
+Confirmed empirically, not assumed -- skimage's own degenerate-correlation
+signal (error == 1.0, "no meaningful peak found") appears even for
+demo_patches pairs known to be pixel-perfect aligned, and the "shift" it
+reports in that regime is noise, not a real misalignment measurement; a
+real satquery-ai demo upload was wrongly rejected as misaligned by exactly
+this before this fix existed. Dimensions and CRS are verified instead
+(CRS via `require_matching_crs=True`, the caller's job to pass; dimensions
+here) and the skip itself is recorded in the trace, never silently
+assumed. Bi-temporal ("change") pairs keep the original phase-correlation
+check unchanged -- both images there come from the SAME sensor, where
+grayscale correlation is a meaningful alignment signal.
 """
 
 import math
@@ -86,15 +102,17 @@ def validate_images(
     min_band_count: int | None = None,
     max_shift_px: float = DEFAULT_MAX_SHIFT_PX,
     require_matching_crs: bool = True,
+    cross_sensor: bool = False,
 ) -> ValidationResult:
     """Validate `inputs` (1 or 2 ImageInputs) before any model is allowed
     to run on them.
 
     `ok=False` means: reject with `reason`, run nothing. `ok=True` with
     `fallback_single_modality=True` means: the pair failed co-registration
-    by more than `max_shift_px`, so proceed with single-image analysis
-    only -- `reason` still explains why, for the trace/UI, but this is not
-    a hard rejection.
+    (by more than `max_shift_px`, or -- for a `cross_sensor` pair -- a
+    dimension mismatch), so proceed with single-image analysis only --
+    `reason` still explains why, for the trace/UI, but this is not a hard
+    rejection.
 
     `require_matching_crs` (default True) rejects a pair outright when
     either image lacks CRS metadata or the two disagree -- correct for
@@ -103,6 +121,18 @@ def validate_images(
     on phase_cross_correlation itself as the alignment check (e.g. two
     plain PNG/JPEG uploads the caller already knows cover the same
     footprint) -- CRS is then skipped, not assumed to match.
+
+    `cross_sensor` (default False) is for a declared optical+SAR pair
+    (api/main.py's cross_modal upload): phase correlation between two
+    genuinely different sensing modalities is not a meaningful alignment
+    signal (see this module's own docstring for why -- confirmed
+    empirically, not assumed), so it's skipped entirely rather than run
+    and trusted anyway. Pass `require_matching_crs=True` alongside it --
+    CRS becomes the actual verification co-registration relies on here,
+    not an optional extra -- and only a matching dimensions/CRS pair is
+    treated as aligned; the skip itself is always recorded in the trace.
+    Leave False (the default) for a same-sensor ("change") pair, where
+    grayscale phase correlation remains a real, meaningful check.
     """
     trace: list[TraceStep] = []
 
@@ -186,43 +216,78 @@ def validate_images(
 
     if len(inputs) == 2:
         img_a, img_b = inputs[0].image, inputs[1].image
-        gray_a, gray_b = _to_grayscale(img_a.data), _to_grayscale(img_b.data)
 
-        if gray_a.shape != gray_b.shape:
-            fallback_single_modality = True
-            reason = (
-                f"images have different pixel dimensions ({gray_a.shape} vs {gray_b.shape}); "
-                "falling back to single-modality analysis"
-            )
-            trace.append(_trace(
-                "coregistration", {"shape_a": gray_a.shape, "shape_b": gray_b.shape},
-                {"ok": True, "outcome": "shape_mismatch_fallback"}, 1.0,
-            ))
-        else:
-            shift, _error, _phasediff = phase_cross_correlation(gray_a, gray_b, upsample_factor=10)
-            shift_px = (float(shift[0]), float(shift[1]))
-            magnitude = math.hypot(*shift_px)
-
-            if magnitude <= max_shift_px:
-                if magnitude > 0:
-                    shifted_images = [img_a, _apply_shift(img_b, shift_px)]
-                    auto_shifted = True
-                trace.append(_trace(
-                    "coregistration", {"max_shift_px": max_shift_px},
-                    {"ok": True, "outcome": "aligned", "shift_px": shift_px, "magnitude_px": magnitude},
-                    1.0,
-                ))
-            else:
+        if cross_sensor:
+            # Phase correlation is skipped entirely -- see this module's
+            # own docstring and validate_images()'s `cross_sensor`
+            # parameter for why it isn't a meaningful signal between
+            # optical and SAR. Only dimensions are checked here; CRS was
+            # already verified above (require_matching_crs=True is the
+            # caller's job to pass alongside cross_sensor=True) -- between
+            # them, that IS the co-registration verification for this
+            # pair, disclosed as such in the trace rather than silently
+            # assumed or silently skipped.
+            shape_a, shape_b = img_a.data.shape[1:], img_b.data.shape[1:]
+            if shape_a != shape_b:
                 fallback_single_modality = True
                 reason = (
-                    f"images are misaligned by {magnitude:.2f} px (> {max_shift_px} px threshold); "
+                    f"images have different pixel dimensions ({shape_a} vs {shape_b}); "
                     "falling back to single-modality analysis"
                 )
                 trace.append(_trace(
-                    "coregistration", {"max_shift_px": max_shift_px},
-                    {"ok": True, "outcome": "misaligned_fallback", "shift_px": shift_px, "magnitude_px": magnitude},
+                    "coregistration", {"cross_sensor": True, "shape_a": shape_a, "shape_b": shape_b},
+                    {"ok": True, "outcome": "shape_mismatch_fallback"}, 1.0,
+                ))
+            else:
+                trace.append(_trace(
+                    "coregistration", {"cross_sensor": True},
+                    {
+                        "ok": True,
+                        "outcome": "shift_estimation_skipped",
+                        "reason": "phase correlation between optical and SAR is not meaningful "
+                                  "(different sensing physics) -- verified by matching dimensions and CRS instead",
+                    },
                     1.0,
                 ))
+
+        else:
+            gray_a, gray_b = _to_grayscale(img_a.data), _to_grayscale(img_b.data)
+
+            if gray_a.shape != gray_b.shape:
+                fallback_single_modality = True
+                reason = (
+                    f"images have different pixel dimensions ({gray_a.shape} vs {gray_b.shape}); "
+                    "falling back to single-modality analysis"
+                )
+                trace.append(_trace(
+                    "coregistration", {"shape_a": gray_a.shape, "shape_b": gray_b.shape},
+                    {"ok": True, "outcome": "shape_mismatch_fallback"}, 1.0,
+                ))
+            else:
+                shift, _error, _phasediff = phase_cross_correlation(gray_a, gray_b, upsample_factor=10)
+                shift_px = (float(shift[0]), float(shift[1]))
+                magnitude = math.hypot(*shift_px)
+
+                if magnitude <= max_shift_px:
+                    if magnitude > 0:
+                        shifted_images = [img_a, _apply_shift(img_b, shift_px)]
+                        auto_shifted = True
+                    trace.append(_trace(
+                        "coregistration", {"max_shift_px": max_shift_px},
+                        {"ok": True, "outcome": "aligned", "shift_px": shift_px, "magnitude_px": magnitude},
+                        1.0,
+                    ))
+                else:
+                    fallback_single_modality = True
+                    reason = (
+                        f"images are misaligned by {magnitude:.2f} px (> {max_shift_px} px threshold); "
+                        "falling back to single-modality analysis"
+                    )
+                    trace.append(_trace(
+                        "coregistration", {"max_shift_px": max_shift_px},
+                        {"ok": True, "outcome": "misaligned_fallback", "shift_px": shift_px, "magnitude_px": magnitude},
+                        1.0,
+                    ))
 
     return ValidationResult(
         ok=True,

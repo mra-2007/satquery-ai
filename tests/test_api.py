@@ -14,6 +14,8 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from rasterio.io import MemoryFile
+from rasterio.transform import from_origin
 from scipy.ndimage import shift as ndi_shift
 
 from agent import planner, tasks
@@ -54,6 +56,23 @@ def _shifted_grayscale_pair(shift_px, width=64, height=64, seed=0) -> tuple[byte
     base = np.random.default_rng(seed).random((height, width)) * 255
     shifted = ndi_shift(base, shift_px, mode="reflect")
     return _grayscale_png_bytes(array=base), _grayscale_png_bytes(array=shifted)
+
+
+def _geotiff_bytes(
+    width=20, height=20, bands=3, seed=0, crs="EPSG:32629", origin=(600_000.0, 4_400_000.0), gsd=10.0,
+) -> bytes:
+    """A real, in-memory georeferenced GeoTIFF -- for a cross-modal pair,
+    this (not phase correlation -- see raster_io/validate.py's own
+    docstring) is what verifies co-registration now, so a real CRS/
+    transform matters here where a plain PNG's pixels used to be enough."""
+    data = (np.random.default_rng(seed).random((bands, height, width)) * 255).astype("uint8")
+    transform = from_origin(origin[0], origin[1], gsd, gsd)
+    with MemoryFile() as memfile:
+        with memfile.open(
+            driver="GTiff", height=height, width=width, count=bands, dtype="uint8", crs=crs, transform=transform,
+        ) as dst:
+            dst.write(data)
+        return memfile.read()
 
 
 # --- GET /scenes --------------------------------------------------------------
@@ -378,14 +397,17 @@ def test_cross_modal_pair_requires_one_optical_and_one_sar(client):
 
 
 def test_cross_modal_pair_upload_registers_a_fused_scene(client):
-    optical, sar = _shifted_grayscale_pair((0.0, 0.0))  # perfectly aligned -- no fallback expected
+    # A matching CRS -- not phase correlation -- is what verifies a
+    # cross-modal pair's co-registration now (see raster_io/validate.py's
+    # own docstring for why phase correlation between optical and SAR
+    # isn't meaningful); plain PNGs (no georeferencing at all) can no
+    # longer exercise the success path here, only real GeoTIFFs can.
+    optical = _geotiff_bytes(bands=3, seed=20)
+    sar = _geotiff_bytes(bands=2, seed=21)
     response = client.post(
         "/upload",
-        files={"file": ("opt.png", optical, "image/png"), "file2": ("sar.png", sar, "image/png")},
-        data={
-            "modality": "optical", "gsd_metres": "10.0", "modality2": "sar", "gsd_metres2": "10.0",
-            "pair_kind": "cross_modal",
-        },
+        files={"file": ("opt.tif", optical, "image/tiff"), "file2": ("sar.tif", sar, "image/tiff")},
+        data={"modality": "optical", "modality2": "sar", "pair_kind": "cross_modal"},
     )
     body = response.json()
     assert body["ok"] is True
@@ -660,9 +682,54 @@ def test_cross_modal_endpoints_404_for_a_non_cross_modal_scene(client):
     assert client.get(f"/scenes/{demo_scene_id}/cross-modal-mask").status_code == 404
 
 
-def test_severely_misaligned_pair_falls_back_to_a_single_scene(client):
-    # shift far beyond DEFAULT_MAX_SHIFT_PX (5.0 px)
-    optical, sar = _shifted_grayscale_pair((25.0, 18.0))
+def test_change_pair_severely_misaligned_falls_back_to_a_single_scene(client):
+    # Bi-temporal ("change") pairs still use phase correlation -- both
+    # images come from the SAME sensor, where grayscale correlation is a
+    # real, meaningful alignment signal (see raster_io/validate.py's own
+    # docstring for why that's specifically NOT true for a cross_modal
+    # pair anymore -- see the tests below).
+    before, after = _shifted_grayscale_pair((25.0, 18.0))  # shift far beyond DEFAULT_MAX_SHIFT_PX (5.0 px)
+    response = client.post(
+        "/upload",
+        files={"file": ("before.png", before, "image/png"), "file2": ("after.png", after, "image/png")},
+        data={
+            "modality": "optical", "gsd_metres": "10.0", "modality2": "optical", "gsd_metres2": "10.0",
+            "pair_kind": "change",
+        },
+    )
+    body = response.json()
+    assert body["ok"] is True  # not a hard rejection -- see raster_io/validate.py
+    assert body["kind"] == "single"
+    assert body["fallback_single_modality"] is True
+    assert any("misaligned" in w for w in body["warnings"])
+
+
+# --- cross-modal co-registration: verified by CRS, not phase correlation ---
+# (see raster_io/validate.py's own docstring for why optical-vs-SAR phase
+# correlation was removed -- confirmed empirically unreliable, not assumed)
+
+
+def test_cross_modal_pair_with_mismatched_dimensions_falls_back(client):
+    optical = _geotiff_bytes(bands=3, width=20, height=20, seed=30)
+    sar = _geotiff_bytes(bands=2, width=30, height=30, seed=31)  # different pixel size
+    response = client.post(
+        "/upload",
+        files={"file": ("opt.tif", optical, "image/tiff"), "file2": ("sar.tif", sar, "image/tiff")},
+        data={"modality": "optical", "modality2": "sar", "pair_kind": "cross_modal"},
+    )
+    body = response.json()
+    assert body["ok"] is True  # not a hard rejection
+    assert body["kind"] == "single"
+    assert body["fallback_single_modality"] is True
+    assert any("dimensions" in w for w in body["warnings"])
+
+
+def test_cross_modal_pair_without_crs_is_rejected(client):
+    # No phase-correlation fallback anymore for a cross-modal pair -- a
+    # pair with no georeferencing at all (plain PNGs) can no longer be
+    # verified as co-registered by any means, so this is now a hard
+    # rejection rather than a silently-trusted or fallback outcome.
+    optical, sar = _shifted_grayscale_pair((0.0, 0.0))
     response = client.post(
         "/upload",
         files={"file": ("opt.png", optical, "image/png"), "file2": ("sar.png", sar, "image/png")},
@@ -672,7 +739,18 @@ def test_severely_misaligned_pair_falls_back_to_a_single_scene(client):
         },
     )
     body = response.json()
-    assert body["ok"] is True  # not a hard rejection -- see raster_io/validate.py
-    assert body["kind"] == "single"
-    assert body["fallback_single_modality"] is True
-    assert any("misaligned" in w for w in body["warnings"])
+    assert body["ok"] is False
+    assert "CRS" in body["reason"]
+
+
+def test_cross_modal_pair_with_mismatched_crs_is_rejected(client):
+    optical = _geotiff_bytes(bands=3, seed=40, crs="EPSG:32629")
+    sar = _geotiff_bytes(bands=2, seed=41, crs="EPSG:32633")  # a different UTM zone
+    response = client.post(
+        "/upload",
+        files={"file": ("opt.tif", optical, "image/tiff"), "file2": ("sar.tif", sar, "image/tiff")},
+        data={"modality": "optical", "modality2": "sar", "pair_kind": "cross_modal"},
+    )
+    body = response.json()
+    assert body["ok"] is False
+    assert "CRS" in body["reason"]

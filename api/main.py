@@ -264,9 +264,14 @@ def _handle_cross_modal_upload(
             reason=f"a cross_modal pair needs one 'optical' and one 'sar' image, got {sorted(declared)}",
         )
 
+    # cross_sensor=True: optical vs SAR phase correlation isn't meaningful
+    # (see raster_io/validate.py's own docstring) -- CRS becomes the real
+    # co-registration check instead, so require_matching_crs=True here,
+    # unlike the same-sensor "change" pair below, which still relies on
+    # phase correlation and keeps CRS matching optional.
     result = validate_images(
         [ImageInput(image, modality), ImageInput(image2, modality2)],
-        expected_count=2, require_matching_crs=False,
+        expected_count=2, require_matching_crs=True, cross_sensor=True,
     )
     if not result.ok:
         return UploadResponse(ok=False, reason=result.reason, modality=modality)
