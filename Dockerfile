@@ -49,10 +49,15 @@ COPY tools/ tools/
 
 # The real trained model + its class config (per CLAUDE.md: never remapped,
 # never regenerated -- this exact ONNX file and this exact config, shipped
-# as-is) and the real BigEarthNet demo patches api.scenes.ensure_scenes_loaded()
-# seeds its queryable demo scenes from at startup.
+# as-is), the real BigEarthNet demo patches api.scenes.ensure_scenes_loaded()
+# seeds its queryable demo scenes from at startup, and the one OSCD split
+# ensure_demo_change_scene_loaded() reads to seed the CHANGE COMPARISON
+# view's own demo scene (just test.parquet, the only file it actually
+# opens -- train.parquet and the regenerated _extracted/ PNG cache are
+# deliberately not tracked in the repo at all, see .gitignore).
 COPY models/ models/
 COPY data/demo_patches/ data/demo_patches/
+COPY data/oscd/test.parquet data/oscd/test.parquet
 
 # The frontend build from stage 1 -- api/main.py serves it directly when
 # web/dist exists (see api/main.py's own "Serve the built React frontend"

@@ -24,12 +24,19 @@ web/node_modules/
 web/dist/
 
 # reBEN / benchmark / eval source data -- large (hundreds of MB combined)
-# and not needed at runtime. data/demo_patches/ is the one exception (the
-# demo scenes the deployed app actually seeds and answers questions
-# against), re-included below the same way models/*'s own exceptions work
-# in .gitignore.
+# and not needed at runtime. data/demo_patches/ (the demo scenes the
+# deployed app actually seeds and answers questions against) and
+# data/oscd/test.parquet (the one file ensure_demo_change_scene_loaded()
+# reads, to seed the CHANGE COMPARISON view's own demo scene) are the two
+# exceptions, re-included the same way models/*'s own exceptions work in
+# .gitignore -- and the same reason .gitignore doesn't track the rest of
+# data/oscd/ either: train.parquet is never read, _extracted/ is a
+# runtime-regenerated PNG cache, not source data.
 data/*
 !data/demo_patches
+!data/oscd
+data/oscd/*
+!data/oscd/test.parquet
 
 # Runtime-generated state (SQLite DB, saved masks/stacks/uploads) -- never
 # baked into the image; the app creates these fresh inside the container.
