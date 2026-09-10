@@ -72,7 +72,15 @@ COPY --from=frontend-build /app/web/dist web/dist
 # deterministic keyword parser instead of failing (see agent/planner.py's
 # own module docstring).
 
-# 7860 is Hugging Face Spaces' own default port for a Docker Space.
+# 7860 is Hugging Face Spaces' own default port for a Docker Space; other
+# hosts (Render included) assign a port at runtime via $PORT and expect
+# the app to bind to it -- EXPOSE is documentation only (it doesn't
+# actually publish anything), so this is the fallback for whichever
+# platform doesn't set $PORT at all.
 EXPOSE 7860
 
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "7860"]
+# Shell form (not the usual JSON-array exec form) specifically so
+# ${PORT:-7860} actually gets expanded -- an exec-form CMD never invokes a
+# shell, so it would pass the literal, unexpanded string "${PORT:-7860}"
+# straight to uvicorn's --port instead of a real port number.
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-7860}"]

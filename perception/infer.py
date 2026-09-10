@@ -84,8 +84,46 @@ def load_class_config(path: Path = DEFAULT_CONFIG_PATH) -> ClassConfig:
 
 def load_model(path: Path = DEFAULT_MODEL_PATH) -> ort.InferenceSession:
     """CPU only, per CLAUDE.md -- never leave provider selection to
-    onnxruntime's default (which would pick a GPU provider if present)."""
-    return ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    onnxruntime's default (which would pick a GPU provider if present).
+
+    intra_op/inter_op threads pinned to 1: onnxruntime's default is one
+    intra-op thread PER CPU CORE (plus its own inter-op pool), and each
+    thread carries real fixed overhead (its own OS stack, and a slice of
+    onnxruntime's internal memory arena) regardless of how small the
+    actual work is -- on a single 120x120 tile, that overhead dwarfs any
+    parallelism benefit, and on a memory-constrained deployment (see
+    api/scenes.py's own docstring on this exact tradeoff) it's pure waste,
+    multiplied by however many CPU cores the host reports.
+    """
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 1
+    options.inter_op_num_threads = 1
+    return ort.InferenceSession(str(path), sess_options=options, providers=["CPUExecutionProvider"])
+
+
+_shared_session: ort.InferenceSession | None = None
+_shared_config: ClassConfig | None = None
+
+
+def get_shared_session(
+    model_path: Path = DEFAULT_MODEL_PATH, config_path: Path = DEFAULT_CONFIG_PATH,
+) -> tuple[ort.InferenceSession, ClassConfig]:
+    """The one ONNX Runtime session (and its ClassConfig) this whole
+    process ever creates -- loaded lazily, on whichever call actually
+    needs it first (a demo-scene seed, a live /query, an /upload), never
+    at import time and never more than once. Sessions are safe to reuse
+    across calls; api/main.py's own request handlers and every demo-scene
+    seeder in api/scenes.py all call this instead of load_model()/
+    load_class_config() directly and keeping their own separate cache --
+    three or four independent sessions would otherwise each pay the same
+    thread-pool/arena overhead load_model()'s own docstring describes, for
+    a model that never actually needs more than one.
+    """
+    global _shared_session, _shared_config
+    if _shared_session is None:
+        _shared_session = load_model(model_path)
+        _shared_config = load_class_config(config_path)
+    return _shared_session, _shared_config
 
 
 def _softmax(logits: np.ndarray, axis: int) -> np.ndarray:

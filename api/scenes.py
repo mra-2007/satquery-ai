@@ -94,20 +94,37 @@ def new_scene_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
 
 
-def ensure_scenes_loaded() -> None:
+def ensure_scenes_loaded(*, limit: int | None = None) -> None:
     """Scan DEMO_PATCHES_DIR and make sure every patch has a scenes row
     and a saved mask file. Patches already loaded (row present AND mask
-    file present) are skipped -- the model is only loaded lazily, the
-    first time it's actually needed."""
+    file present) are skipped -- the model is only loaded lazily (see
+    perception.infer.get_shared_session()), the first time it's actually
+    needed, and shared with every other demo-scene seeder in this module
+    rather than each creating its own session.
+
+    `limit`, when given, stops after registering that many NEW scenes in
+    THIS call (already-registered ones are skipped for free and don't
+    count against it) -- used by api/main.py's startup lifespan to seed
+    just one demo scene cheaply on a memory-constrained deployment,
+    without paying for every patch's inference before the app has even
+    bound its port. The unlimited call happens lazily instead, the first
+    time GET /scenes is requested (api/main.py's list_scenes()) -- calling
+    this again there for already-registered patches costs nothing beyond
+    the existence checks.
+    """
     if not DEMO_PATCHES_DIR.exists():
         return
     MASKS_DIR.mkdir(parents=True, exist_ok=True)
 
     session = None
     config = None
+    registered = 0
     conn = get_connection()
     try:
         for npz_path in sorted(DEMO_PATCHES_DIR.glob("*.npz")):
+            if limit is not None and registered >= limit:
+                break
+
             scene_id = npz_path.stem
             mask_path = MASKS_DIR / f"{scene_id}.npy"
 
@@ -116,8 +133,7 @@ def ensure_scenes_loaded() -> None:
                 continue
 
             if session is None:
-                session = infer.load_model()
-                config = infer.load_class_config()
+                session, config = infer.get_shared_session()
 
             data = np.load(npz_path, allow_pickle=True)
             stack = data["stack"][:16].astype(np.float32)  # drop the always-zero 17th band
@@ -130,6 +146,7 @@ def ensure_scenes_loaded() -> None:
                 gsd_metres=GSD_METRES, sensor=SENSOR, mask_path=str(mask_path),
                 classes=dict(enumerate(SEGMENTATION_CLASSES)), kind="single", source="demo",
             )
+            registered += 1
     finally:
         conn.close()
 
@@ -176,8 +193,7 @@ def ensure_demo_cross_modal_scene_loaded() -> None:
     npz_path = patches[0]
 
     stack = load_scene_stack(npz_path.name)
-    session = infer.load_model()
-    config = infer.load_class_config()
+    session, config = infer.get_shared_session()
     result = infer.segment_image(stack, SENSOR, session=session, config=config)
 
     MASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -590,6 +606,5 @@ def ensure_demo_change_scene_loaded() -> None:
     if not result.ok or result.fallback_single_modality:
         return  # OSCD ships pre-registered pairs -- should never actually happen
 
-    session = infer.load_model()
-    config = infer.load_class_config()
+    session, config = infer.get_shared_session()
     register_change_pair(before_image, after_image, session, config, source="demo")

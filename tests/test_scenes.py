@@ -145,3 +145,73 @@ def test_ensure_demo_change_scene_loaded_skips_when_oscd_dir_exists_but_parquet_
     monkeypatch.setattr(scenes, "OSCD_DIR", empty_oscd_dir)
 
     scenes.ensure_demo_change_scene_loaded()  # must not raise
+
+
+# --- ensure_scenes_loaded(limit=...): seed one scene cheaply at startup ----
+# on a memory-constrained deployment (Render's free tier, OOM-killed before
+# this existed), the rest lazily on the first real GET /scenes.
+
+
+def _fake_patches_dir(tmp_path, count: int, prefix: str):
+    """`count` tiny, real-model-compatible synthetic patches (single
+    120x120 tile, no tiling needed) -- a fresh, isolated directory, not
+    the real data/demo_patches/ (which other test modules' `client`
+    fixtures may have already fully registered in the shared session DB
+    -- see tests/conftest.py -- making a genuine "0 -> N newly registered"
+    transition unobservable against the real one). `prefix` must be
+    UNIQUE PER TEST: scene ids are the .npz filename stem, and the shared
+    session-scoped DB persists rows across every test in the whole run --
+    reusing the same filenames across tests would let one test's own
+    insertions be picked up by a LATER test's "how many did I just
+    register" query, exactly the isolation bug
+    test_ensure_demo_change_scene_loaded_skips_gracefully_without_oscd
+    above already had to account for."""
+    patches_dir = tmp_path / "fake_demo_patches"
+    patches_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(count):
+        stack = (rng.random((16, 120, 120)) * 1000).astype(np.float32)
+        np.savez(patches_dir / f"{prefix}_{i}.npz", stack=stack)
+    return patches_dir
+
+
+def _count_registered(prefix: str) -> int:
+    conn = get_connection()
+    try:
+        return len(conn.execute("SELECT id FROM scenes WHERE id LIKE ?", (f"{prefix}_%",)).fetchall())
+    finally:
+        conn.close()
+
+
+def test_ensure_scenes_loaded_with_limit_registers_at_most_that_many(monkeypatch, tmp_path):
+    prefix = "fake_patch_limit1"
+    patches_dir = _fake_patches_dir(tmp_path, count=3, prefix=prefix)
+    monkeypatch.setattr(scenes, "DEMO_PATCHES_DIR", patches_dir)
+    monkeypatch.setattr(scenes, "MASKS_DIR", tmp_path / "masks")
+
+    scenes.ensure_scenes_loaded(limit=1)
+
+    assert _count_registered(prefix) == 1
+
+
+def test_ensure_scenes_loaded_unlimited_call_registers_the_rest(monkeypatch, tmp_path):
+    prefix = "fake_patch_unlimited"
+    patches_dir = _fake_patches_dir(tmp_path, count=3, prefix=prefix)
+    monkeypatch.setattr(scenes, "DEMO_PATCHES_DIR", patches_dir)
+    monkeypatch.setattr(scenes, "MASKS_DIR", tmp_path / "masks")
+
+    scenes.ensure_scenes_loaded(limit=1)  # as the startup lifespan would call it
+    scenes.ensure_scenes_loaded()         # as list_scenes()'s lazy trigger would call it
+
+    assert _count_registered(prefix) == 3  # the limited call's one scene, plus the remaining two
+
+
+def test_ensure_scenes_loaded_limit_zero_registers_nothing(monkeypatch, tmp_path):
+    prefix = "fake_patch_limit0"
+    patches_dir = _fake_patches_dir(tmp_path, count=2, prefix=prefix)
+    monkeypatch.setattr(scenes, "DEMO_PATCHES_DIR", patches_dir)
+    monkeypatch.setattr(scenes, "MASKS_DIR", tmp_path / "masks")
+
+    scenes.ensure_scenes_loaded(limit=0)
+
+    assert _count_registered(prefix) == 0

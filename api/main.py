@@ -129,9 +129,16 @@ UPLOADS_DIR = ROOT_DIR / "data" / "api" / "uploads"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    ensure_scenes_loaded()
-    ensure_demo_change_scene_loaded()
-    ensure_demo_cross_modal_scene_loaded()
+    # Only ONE demo scene (not all 15 demo_patches, and not the change/
+    # cross-modal demo scenes at all) is seeded here -- on a memory-
+    # constrained deployment (Render's free tier: 512 MiB, OOM-killed
+    # before this existed), a burst of ~18 sequential inferences before
+    # the app has even bound its port was real, measured risk. The rest
+    # are registered lazily, the first time GET /scenes is actually
+    # requested (see list_scenes() below) -- every one of these seeders
+    # is already idempotent (skips anything already registered), so this
+    # is purely about WHEN the work happens, not duplicating it.
+    ensure_scenes_loaded(limit=1)
     yield
 
 
@@ -161,19 +168,13 @@ def _get_scene_row(scene_id: str):
     return row
 
 
-# Loading the ONNX session/class config isn't cheap -- cache it across
-# requests the same way api/scenes.py's ensure_scenes_loaded() does,
-# rather than reloading it for every single upload.
-_inference_session: Any = None
-_inference_config: Any = None
-
-
 def _get_inference_session() -> tuple[Any, Any]:
-    global _inference_session, _inference_config
-    if _inference_session is None:
-        _inference_session = infer.load_model()
-        _inference_config = infer.load_class_config()
-    return _inference_session, _inference_config
+    """The one ONNX Runtime session this process ever creates -- see
+    perception.infer.get_shared_session()'s own docstring. Kept as a thin
+    wrapper (not inlined at each of this file's 6 call sites) so nothing
+    else in this module has to know that api/scenes.py's demo-scene
+    seeders share the exact same session."""
+    return infer.get_shared_session()
 
 
 def _save_upload(file: UploadFile) -> Path:
@@ -329,7 +330,20 @@ def _handle_change_upload(
 @app.get("/scenes", response_model=list[SceneSummary])
 def list_scenes() -> list[SceneSummary]:
     """Every scene -- preloaded demos and uploads alike -- ready to
-    /query against by its `id`."""
+    /query against by its `id`.
+
+    The lazy-registration trigger for every demo scene the startup
+    lifespan didn't seed (see lifespan()'s own comment): the remaining
+    data/demo_patches/ patches, plus the change/cross-modal demo scenes,
+    are registered here, on the FIRST call to this endpoint -- exactly
+    the moment the frontend actually needs the full list. All three
+    seeders are idempotent (each is a no-op once its own scene(s) already
+    exist), so every call after the first costs nothing beyond the
+    existence checks themselves."""
+    ensure_scenes_loaded()
+    ensure_demo_change_scene_loaded()
+    ensure_demo_cross_modal_scene_loaded()
+
     conn = get_connection()
     try:
         rows = conn.execute("SELECT * FROM scenes ORDER BY created_at").fetchall()

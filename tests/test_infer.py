@@ -48,6 +48,33 @@ def test_load_model_has_the_expected_input_output_names(session):
     assert output_names == {"segmentation", "classification"}
 
 
+def test_load_model_pins_a_single_intra_and_inter_op_thread(session):
+    # Real, measured overhead on a memory-constrained deployment (Render's
+    # free tier) -- see load_model()'s own docstring. onnxruntime's
+    # SessionOptions are write-only at construction but do read back
+    # correctly off the session afterward.
+    options = session.get_session_options()
+    assert options.intra_op_num_threads == 1
+    assert options.inter_op_num_threads == 1
+
+
+# --- get_shared_session: one process-wide session, loaded lazily -----------
+
+
+def test_get_shared_session_returns_the_identical_session_every_call():
+    session_a, config_a = infer.get_shared_session()
+    session_b, config_b = infer.get_shared_session()
+    assert session_a is session_b  # not just equal -- the SAME object, never reloaded
+    assert config_a is config_b
+
+
+def test_get_shared_session_also_pins_one_thread():
+    session, _config = infer.get_shared_session()
+    options = session.get_session_options()
+    assert options.intra_op_num_threads == 1
+    assert options.inter_op_num_threads == 1
+
+
 # --- segment_image against the real model, synthetic input ------------------
 
 
