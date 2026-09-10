@@ -265,14 +265,18 @@ def test_run_executes_caption_tool(monkeypatch):
     assert isinstance(entry.output["facts"], list)
 
 
-def test_run_caption_respects_max_length_parameter(monkeypatch):
-    from tools import caption as caption_tool
-    monkeypatch.setattr(caption_tool, "GOOGLE_API_KEY", None)
-
+def test_run_rejects_a_plan_that_sets_max_length_on_caption():
+    # max_length used to be a plannable caption parameter, letting Gemini
+    # pick an arbitrary cutoff and silently truncate an otherwise-correct,
+    # already-verified caption mid-word. It's no longer in the tool's
+    # permitted_parameters (agent/registry.py) -- a plan carrying it now
+    # fails validation before caption() ever runs, rather than being
+    # honored. tools/caption.py's own max_length kwarg is untouched and
+    # still directly callable -- see tests/test_caption.py -- it's just no
+    # longer reachable through a plan.
     plan = Plan.model_validate([{"id": "cap1", "tool": "caption", "parameters": {"max_length": 5}}])
-    result, _trace = run(plan, GSD_10M, mask=_water_mask())
-
-    assert len(result["cap1"].caption) == 5
+    with pytest.raises(PlanValidationError):
+        run(plan, GSD_10M, mask=_water_mask())
 
 
 def test_run_without_mask_raises_when_plan_needs_caption():

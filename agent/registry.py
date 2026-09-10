@@ -152,7 +152,7 @@ REGISTRY: dict[str, Tool] = {
         _tool(
             "caption",
             "Free-text description of the image, from a vision-language model.",
-            "optical", (1.0, 30.0), 3, {"max_length": int},
+            "optical", (1.0, 30.0), 3, {},
         ),
         _tool(
             "ground",

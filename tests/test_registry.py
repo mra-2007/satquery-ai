@@ -154,6 +154,18 @@ def test_validate_parameters_accepts_empty_call_on_empty_schema_tool():
     validate_parameters(REGISTRY["segment"], {})  # no raise
 
 
+def test_caption_has_no_plannable_parameters():
+    # max_length used to be plannable here, letting Gemini pick an
+    # arbitrary cutoff and silently truncate an otherwise-correct,
+    # already-verified caption mid-word (see tools/caption.py's own
+    # max_length kwarg, which is still a real function parameter -- just
+    # no longer one the LLM's plan can set). The planner has no principled
+    # basis for choosing a length, so nothing is plannable here now.
+    assert REGISTRY["caption"].permitted_parameters == {}
+    with pytest.raises(ParameterValidationError):
+        validate_parameters(REGISTRY["caption"], {"max_length": 100})
+
+
 def test_validate_parameters_ground_requires_query_string():
     validate_parameters(REGISTRY["ground"], {"query": "red rooftop"})  # no raise
     with pytest.raises(ParameterValidationError):
