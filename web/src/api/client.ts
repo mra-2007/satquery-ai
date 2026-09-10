@@ -12,7 +12,15 @@ import type {
   UploadResponse,
 } from "./types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
+// Same origin by default (empty string -- `${API_URL}${path}` then resolves
+// relative to whatever page served this bundle), so a production build
+// works unmodified wherever it's deployed: api/main.py serves this build's
+// static files itself, on the SAME port as the API, once web/dist exists
+// (see its own module docstring). Local dev (`npm run dev`, import.meta.env.DEV
+// -- a real Vite build-time flag, not manually set) keeps defaulting to the
+// separately-running backend on :8080, exactly as before. VITE_API_URL, if
+// set, always wins over either default.
+const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:8080" : "");
 
 export class ApiError extends Error {
   status: number;

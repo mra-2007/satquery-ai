@@ -1,10 +1,13 @@
 """Unit tests for api/scenes.py's channel-mapping helpers:
 build_model_input_from_bands (optical) and place_sar_bands (SAR) -- the
 honest, disclosed handling of an upload that doesn't have the model's
-real 16 Sentinel-1/2 channels."""
+real 16 Sentinel-1/2 channels. Also covers ensure_demo_change_scene_loaded's
+own defensive guard for a deployment image that doesn't ship data/oscd/."""
 
 import numpy as np
 
+from api import scenes
+from api.database import get_connection
 from api.scenes import RGB_TO_DN_SCALE, build_model_input_from_bands, place_sar_bands
 
 
@@ -101,3 +104,44 @@ def test_sar_values_are_not_rescaled_unlike_optical_rgb():
     place_sar_bands(channels, sar)
     assert np.array_equal(channels[10], sar[0].astype(np.float32))
     assert not np.allclose(channels[10], sar[0].astype(np.float32) * RGB_TO_DN_SCALE)
+
+
+# --- ensure_demo_change_scene_loaded: missing data/oscd/ must not crash ----
+# startup -- a lean deployment image (see the Dockerfile) only ships
+# data/demo_patches/, deliberately not the much larger data/oscd/.
+#
+# tests/conftest.py's session-scoped DB is shared across the whole test
+# run, and other modules (test_api.py's `client` fixture, elsewhere in the
+# same session) legitimately seed a real 'demo'+'change' scene against the
+# REAL data/oscd/ before this file's own tests ever run -- so these tests
+# must not assume the table starts empty, only that it ends up in the same
+# state it started in (this function skipped, added nothing new).
+
+
+def _demo_change_scene_count() -> int:
+    conn = get_connection()
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM scenes WHERE source = 'demo' AND kind = 'change'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_ensure_demo_change_scene_loaded_skips_gracefully_without_oscd(monkeypatch, tmp_path):
+    monkeypatch.setattr(scenes, "OSCD_DIR", tmp_path / "oscd_missing")  # no such directory at all
+    before = _demo_change_scene_count()
+
+    scenes.ensure_demo_change_scene_loaded()  # must not raise
+
+    assert _demo_change_scene_count() == before  # nothing new was seeded -- correctly skipped
+
+
+def test_ensure_demo_change_scene_loaded_skips_when_oscd_dir_exists_but_parquet_is_missing(monkeypatch, tmp_path):
+    # The directory itself existing isn't enough -- the specific parquet
+    # split file is what's actually read.
+    empty_oscd_dir = tmp_path / "oscd_empty"
+    empty_oscd_dir.mkdir()
+    monkeypatch.setattr(scenes, "OSCD_DIR", empty_oscd_dir)
+
+    scenes.ensure_demo_change_scene_loaded()  # must not raise

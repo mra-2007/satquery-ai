@@ -1,0 +1,55 @@
+# Never ship secrets -- explicit at every depth (not relying on any
+# implicit recursive-match behaviour), including web/'s own .env/.env.local
+# (gitignored, so `git clone` never has them, but a LOCAL `docker build` run
+# from this checkout would still see them on disk otherwise -- and
+# web/.env.local here really does exist locally, pinned to
+# VITE_API_URL=http://127.0.0.1:8080 for local dev, which would silently
+# defeat the same-origin production default in web/src/api/client.ts if it
+# ever reached `npm run build` inside the image).
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Python virtualenv -- the image installs its own deps from requirements.txt.
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node -- the frontend-build stage installs its own deps and builds fresh;
+# a locally-built dist/ must not leak into the build context either, so the
+# build stage always produces its own.
+web/node_modules/
+web/dist/
+
+# reBEN / benchmark / eval source data -- large (hundreds of MB combined)
+# and not needed at runtime. data/demo_patches/ is the one exception (the
+# demo scenes the deployed app actually seeds and answers questions
+# against), re-included below the same way models/*'s own exceptions work
+# in .gitignore.
+data/*
+!data/demo_patches
+
+# Runtime-generated state (SQLite DB, saved masks/stacks/uploads) -- never
+# baked into the image; the app creates these fresh inside the container.
+data/api/
+
+# Dev/eval-only tooling -- not needed to run the deployed API.
+eval/
+scripts/
+tests/
+
+# Git metadata, editor/OS cruft, docs irrelevant to the running container.
+.git/
+.github/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
+CLAUDE.md
+README.md

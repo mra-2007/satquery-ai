@@ -81,7 +81,8 @@ from typing import Any, Literal
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from agent.dsl import PlanValidationError, validate
 from agent.executor import ExecutorError, run as run_plan
@@ -624,3 +625,38 @@ def download_report(report_id: str) -> Response:
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="report_{report_id}.json"'},
     )
+
+
+# --- Serve the built React frontend, same origin as the API -----------------
+# Only when web/dist exists -- the Dockerfile's frontend-build stage builds
+# it and copies it in; a local `venv\Scripts\python.exe -m uvicorn
+# api.main:app --reload` run for backend development, with no build ever
+# run, sees no web/dist and registers none of this, unchanged from before
+# this existed (the frontend is then served separately by `npm run dev`,
+# talking to this API over CORS -- see web/src/api/client.ts's own
+# API_URL, which already defaults to that in Vite's dev mode).
+#
+# Registered LAST, after every real API route above: FastAPI/Starlette
+# matches routes in declaration order, so every /query, /scenes, /upload,
+# etc. above is always tried first -- this catch-all only ever receives a
+# request that matched none of them. Without that ordering, this route's
+# `/{full_path:path}` converter (which matches literally anything) would
+# shadow every API route declared after it.
+FRONTEND_DIST_DIR = ROOT_DIR / "web" / "dist"
+
+if FRONTEND_DIST_DIR.exists():
+    app.mount(
+        "/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="frontend-assets",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_frontend(full_path: str) -> Response:
+        """Any real built file (favicon, manifest, ...) is served as-is;
+        everything else -- including a deep link like /analyze, direct-
+        navigated or refreshed -- gets index.html so react-router-dom's
+        client-side routing (web/src/main.tsx's <Routes>) can take over,
+        exactly the SPA fallback a static host would normally provide."""
+        candidate = FRONTEND_DIST_DIR / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST_DIR / "index.html")

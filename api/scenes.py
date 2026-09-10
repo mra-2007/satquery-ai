@@ -552,12 +552,23 @@ def ensure_demo_change_scene_loaded() -> None:
     if existing is not None:
         return
 
+    parquet_path = OSCD_DIR / f"{OSCD_DEMO_SPLIT}.parquet"
+    if not parquet_path.exists():
+        # Same defensive guard as ensure_scenes_loaded()'s own "if not
+        # DEMO_PATCHES_DIR.exists(): return" -- data/oscd/ is the large
+        # (39 MB) OSCD source archive, deliberately excluded from a lean
+        # deployment image (Dockerfile only copies data/demo_patches/), so
+        # this one demo 'change' scene simply isn't seeded there rather
+        # than crashing FastAPI's whole startup lifespan over one missing
+        # optional demo.
+        return
+
     import pandas as pd  # local import: only this one-time seeding path needs parquet support
 
     from raster_io.readers import read_image
     from raster_io.validate import ImageInput, validate_images
 
-    df = pd.read_parquet(OSCD_DIR / f"{OSCD_DEMO_SPLIT}.parquet")
+    df = pd.read_parquet(parquet_path)
     row = df.iloc[OSCD_DEMO_ROW_INDEX]
 
     OSCD_EXTRACTED_DIR.mkdir(parents=True, exist_ok=True)
