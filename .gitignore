@@ -2,10 +2,27 @@ venv/
 __pycache__/
 *.pyc
 .env
-data/
 agent/.cache/
 models/*
 !models/satquery_model.onnx
 !models/class_config.json
 outputs/
 node_modules/
+
+# data/ is ignored wholesale (the reBEN/benchmark/eval source data and all
+# runtime-generated state are large and/or machine-local) EXCEPT the two
+# real data sources the deployed app actually reads at startup -- see
+# Dockerfile / api/scenes.py's ensure_scenes_loaded() and
+# ensure_demo_change_scene_loaded(). A bare `data/` ignore (the line this
+# replaced) blocks `!` negations for anything under it -- git can't
+# re-include a path whose parent directory is itself excluded -- so this
+# uses `data/*` instead, the same negation-friendly pattern already used
+# for models/* above.
+data/*
+!data/demo_patches
+!data/oscd
+data/oscd/*
+!data/oscd/test.parquet
+# data/oscd/train.parquet (25.9 MB) is never read (OSCD_DEMO_SPLIT="test"
+# in api/scenes.py) and data/oscd/_extracted/ is a runtime-regenerated PNG
+# cache, not source data -- both stay ignored by the data/oscd/* line above.
